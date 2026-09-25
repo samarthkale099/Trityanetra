@@ -1,0 +1,49 @@
+# ---------- Dependencies ----------
+# Matches node_modules at any depth (backend/, frontend/, ...)
+**/node_modules/
+
+# ---------- Python (ast-engine/) ----------
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ---------- Redis: binaries & runtime (redis/) ----------
+# .exe/.dll/.pdb are the Windows Redis distribution binaries + debug symbols —
+# vendored executables, not source, and .pdb alone is ~21MB
+redis/*.exe
+redis/*.dll
+redis/*.pdb
+# Vendor docs shipped inside the Redis distribution zip (same provenance as
+# the binaries) — not our source or config
+redis/*.docx
+# Runtime state written when the server runs
+dump.rdb
+appendonly.aof
+*.log
+# The 5.6MB Redis distribution archive at the repo root
+/redis.zip
+
+# ---------- Env secrets ----------
+# Ignore real env files at any depth, but keep committed templates
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ---------- Build output ----------
+dist/
+build/
+.next/
+*.tsbuildinfo
+
+# ---------- Editor / OS noise ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
