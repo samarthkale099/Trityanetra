@@ -3,8 +3,6 @@ from comparator.ast_parser import parse_code
 from comparator.comparator import compare
 from comparator.prefilter import should_compare
 from config import (
-    COSINE_SIMILARITY_LOW, COSINE_SIMILARITY_MEDIUM, COSINE_SIMILARITY_HIGH,
-    TED_THRESHOLD_LOW, TED_THRESHOLD_MEDIUM, TED_THRESHOLD_HIGH,
     MAX_BATCH_SIZE, BATCH_TIMEOUT_SECONDS,
 )
 import time
@@ -58,37 +56,63 @@ def run_batch(submissions: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     # Parse all submissions
     parsed = []
+    seen_ids = set()
     for sub in submissions:
         if not sub.get("id"):
-            raise BatchRunValidationError("Each submission must have an 'id'")
+            raise BatchRunValidationError(
+                "Each submission must have a non-empty 'id'"
+            )
+
+        sub_id = sub["id"]
+        if sub_id in seen_ids:
+            raise BatchRunValidationError(
+                f"Duplicate submission id: '{sub_id}'"
+            )
+        seen_ids.add(sub_id)
 
         if "code" not in sub:
-            raise BatchRunValidationError("Each submission must have a 'code'")
+            raise BatchRunValidationError(
+                f"Submission '{sub_id}' is missing required field 'code'"
+            )
+
+        code = sub["code"]
+        if not isinstance(code, str):
+            raise BatchRunValidationError(
+                f"Submission '{sub_id}' field 'code' must be a string, "
+                f"got {type(code).__name__}"
+            )
 
         language = sub.get("language", "python")
-        code = sub.get("code", "")
+        if not isinstance(language, str):
+            raise BatchRunValidationError(
+                f"Submission '{sub_id}' field 'language' must be a string, "
+                f"got {type(language).__name__}"
+            )
         try:
             parsed_features = parse_code(code, language) if code else {
                 "node_types": [],
                 "identifiers": [],
                 "operators": [],
+                "tokens": [],
                 "depth": 0,
                 "line_count": 0,
                 "token_count": 0,
             }
-        except Exception as e:
-            # Handle parse errors gracefully — use empty features
+        except Exception:
+            # Last-resort guard (e.g. MemoryError on pathological input):
+            # parse_code already handles syntax errors and null bytes itself.
             parsed_features = {
                 "node_types": [],
                 "identifiers": [],
                 "operators": [],
+                "tokens": [],
                 "depth": 0,
                 "line_count": 0,
                 "token_count": 0,
             }
         
         parsed.append({
-            "id": sub["id"],
+            "id": sub_id,
             "studentId": sub.get("studentId", ""),
             "features": parsed_features,
         })
@@ -142,31 +166,28 @@ def run_batch(submissions: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def _determine_flag_level(metrics: Dict[str, float]) -> str:
     """
-    Determine the plagiarism flag level from similarity metrics.
+    Determine the plagiarism flag level from the combined score.
 
-    Uses a composition of cosine similarity (token-level) and TED score
-    (structural). A level is only reached when both metrics agree, or the
-    combined score is decisive, to avoid false positives from either metric
-    firing on its own:
-    - high:  cosine >= HIGH and ted >= LOW, or combined >= 0.85
-    - medium: cosine >= MEDIUM and ted >= LOW, or combined >= 0.7
-    - low:   cosine >= LOW and ted >= LOW, or combined >= 0.5
-    - none: below all thresholds
+    The secondary rule (cosine >= 0.8 and ted >= 0.5 -> high, and the
+    matching cosine/ted shortcuts for medium and low) is gone: it let two
+    metrics fire independently of the weighted combined score and flagged
+    structurally similar but honestly independent submissions as high.
+    The combined score alone decides:
+    - high:   combined >= 0.80  (renamed-copy level: Part 5 measured 0.8000-0.8182,
+                                 honest independent submissions measured <= 0.6971)
+    - medium: combined >= 0.70
+    - low:    combined >= 0.50
+    - none:   combined < 0.50
     """
-    cosine = metrics["cosine_similarity"]
-    ted = metrics["ted_score"]
     combined = metrics["combined_score"]
 
-    # High: strong agreement between both metrics, or decisive combined score
-    if (cosine >= COSINE_SIMILARITY_HIGH and ted >= TED_THRESHOLD_LOW) or combined >= 0.85:
+    if combined >= 0.80:
         return "high"
 
-    # Medium: moderate agreement between both metrics
-    if (cosine >= COSINE_SIMILARITY_MEDIUM and ted >= TED_THRESHOLD_LOW) or combined >= 0.7:
+    if combined >= 0.70:
         return "medium"
 
-    # Low: weak but consistent agreement between both metrics
-    if (cosine >= COSINE_SIMILARITY_LOW and ted >= TED_THRESHOLD_LOW) or combined >= 0.5:
+    if combined >= 0.50:
         return "low"
 
     return "none"

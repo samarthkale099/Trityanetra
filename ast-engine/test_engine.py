@@ -90,8 +90,9 @@ class TestScorer:
             assert 0.0 <= value <= 1.0
 
     def test_jaccard_bounds(self):
-        assert jaccard_similarity([], []) == 1.0
+        assert jaccard_similarity([], []) == 0.0
         assert jaccard_similarity(["a"], []) == 0.0
+        assert jaccard_similarity(["a"], ["a"]) == pytest.approx(1.0)
         assert jaccard_similarity(["a", "b"], ["b", "c"]) == pytest.approx(1 / 3)
 
     def test_combined_score_bounds_and_weights(self):

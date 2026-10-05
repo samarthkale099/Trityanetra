@@ -47,8 +47,9 @@ def jaccard_similarity(set_a: List[str], set_b: List[str]) -> float:
     a = set(set_a)
     b = set(set_b)
 
-    if not a and not b:
-        return 1.0  # Both empty = identical
+    # Any empty input scores 0.0 — matches cosine_similarity's behavior.
+    # Two empty inputs are NOT evidence of similarity (two blank submissions
+    # must never score as "identical").
     if not a or not b:
         return 0.0
 

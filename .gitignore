@@ -10,7 +10,11 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 *.egg-info/
+# Generated verification reports (fixtures + runner scripts stay tracked)
+ast-engine/test_fixtures/manual_comparison_report.csv
+ast-engine/test_fixtures/batch_scaling_report.csv
 
 # ---------- Redis: binaries & runtime (redis/) ----------
 # .exe/.dll/.pdb are the Windows Redis distribution binaries + debug symbols —
