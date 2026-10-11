@@ -52,3 +52,12 @@ build/
 Thumbs.db
 desktop.ini
 extra-work-backup.zip 
+
+# ---------- Backend / frontend additions ----------
+# Firebase service-account keys must never be committed
+serviceAccount*.json
+backend/config/serviceAccountKey.json
+*.pem
+# Local test-run output
+vitest-*.txt
+vitest-results.json
