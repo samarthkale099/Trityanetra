@@ -5,7 +5,11 @@ export const createCollege = async (req: Request, res: Response, next: NextFunct
   try {
     const { name, code } = req.body;
     const requesterCollegeId = req.user?.collegeId;
-    
+
+    if (typeof name !== 'string' || !name.trim() || typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ error: 'name and code are required' });
+    }
+
     const data = await createCollegeService(requesterCollegeId, name, code);
     
     res.status(201).json({ message: 'College created successfully', data });

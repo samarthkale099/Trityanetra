@@ -1,6 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import { Request } from 'express';
-import { redis } from '../../lib/redis';
+import { rateLimitRedis } from '../../lib/redis';
 import { RedisRateLimitStore } from '../../middleware/redisRateLimitStore';
 
 // Redis-backed in real runs (shared across instances, survives restarts, own "rl:monitor:" namespace).
@@ -16,7 +16,7 @@ export const monitorRateLimiter = rateLimit({
     return `${userId}_${testId}`;
   },
   message: { error: 'Too many flag requests, please slow down.' },
-  ...(useRedis ? { store: new RedisRateLimitStore(redis as any, 'rl:monitor:') } : {}),
+  ...(useRedis ? { store: new RedisRateLimitStore(rateLimitRedis as any, 'rl:monitor:') } : {}),
   // Flags are advisory-only: if Redis is down, let the request through rather than drop the flag.
   passOnStoreError: true,
 });
