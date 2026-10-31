@@ -1,12 +1,9 @@
-import * as admin from 'firebase-admin';
 import * as dotenv from 'dotenv';
+// Same initialisation as the server: uses config/serviceAccountKey.json when present.
+import admin from '../src/db/firebase';
 import { hashPassword } from '../src/modules/auth/passwordHash.util';
 
 dotenv.config();
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
 
 async function bootstrap() {
   const email = process.argv[2] || process.env.BOOTSTRAP_ADMIN_EMAIL;
