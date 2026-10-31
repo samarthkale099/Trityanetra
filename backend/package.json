@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "nodemon src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "firebase emulators:exec --project demo-test \"vitest run\"",
+    "test:unit": "vitest run src/tests/middleware"
   },
   "dependencies": {
     "@types/opossum": "^8.1.9",
