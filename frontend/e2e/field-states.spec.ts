@@ -42,7 +42,7 @@ const PAGES: readonly FieldCase[] = [
   },
 ]
 
-/** Resolves a design token to the rgb() string `getComputedStyle` reports. */
+/** Resolves a design token to "r,g,b,a" so it compares with `borderColor`. */
 function tokenColor(page: Page, cssVar: string): Promise<string> {
   return page.evaluate((name) => {
     const probe = document.createElement('span')
@@ -50,14 +50,24 @@ function tokenColor(page: Page, cssVar: string): Promise<string> {
     document.body.appendChild(probe)
     const value = getComputedStyle(probe).color
     probe.remove()
-    return value
+    // Paint it to read plain numbers: a color-mix() token is reported as
+    // `color(srgb ...)`, while the same colour on a border may come back as rgb().
+    const ctx = document.createElement('canvas').getContext('2d')!
+    ctx.fillStyle = value
+    ctx.fillRect(0, 0, 1, 1)
+    return Array.from(ctx.getImageData(0, 0, 1, 1).data).join(',')
   }, cssVar)
 }
 
 function borderColor(page: Page, label: string): Promise<string> {
   return page
     .getByLabel(label, { exact: true })
-    .evaluate((el) => getComputedStyle(el).borderTopColor)
+    .evaluate((el) => {
+      const ctx = document.createElement('canvas').getContext('2d')!
+      ctx.fillStyle = getComputedStyle(el).borderTopColor
+      ctx.fillRect(0, 0, 1, 1)
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).join(',')
+    })
 }
 
 /** The theme is persisted, so a reload after seeding it is deterministic. */
