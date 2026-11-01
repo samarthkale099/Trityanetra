@@ -10,6 +10,7 @@ import submissionRoutes from './modules/submission/submission.routes';
 import authRoutes from './modules/auth/auth.routes';
 import monitorRoutes from './modules/monitor/monitor.routes';
 import plagiarismRoutes from './modules/plagiarism/plagiarism.routes';
+import judge0Routes from './modules/judge0/judge0.routes';
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use('/api/submissions', submissionRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/monitor', monitorRoutes);
 app.use('/api/plagiarism', plagiarismRoutes);
+app.use('/api/judge0', judge0Routes);
 
 app.use(errorHandler);
 

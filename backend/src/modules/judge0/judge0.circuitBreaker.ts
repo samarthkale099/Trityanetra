@@ -15,9 +15,9 @@ const options = {
 
 export const judge0CircuitBreaker = new CircuitBreaker(submitCodeToJudge0, options);
 
-export const submitCodeWithBreaker = async (code: string, languageId: number) => {
+export const submitCodeWithBreaker = async (code: string, languageId: number, stdin = '') => {
   try {
-    return await judge0CircuitBreaker.fire(code, languageId);
+    return await judge0CircuitBreaker.fire(code, languageId, stdin);
   } catch (error: any) {
     if (error && error.code === 'EOPENBREAKER') {
       throw new Error('Judge0 temporarily unavailable');
