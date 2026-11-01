@@ -28,7 +28,7 @@ const STUDENT = {
 }
 
 const REVIEW_URL = `/app/classrooms/${SEEDED_CLASSROOM_ID}/tests/${SEEDED_REVIEW_TEST_ID}/submissions`
-const RIYA_SUBMISSION = `sub-${SEEDED_REVIEW_TEST_ID}-uid-${STUDENT.email}`
+const RIYA_SUBMISSION = `uid-${STUDENT.email}`
 
 /** Mirrors the role and college the backend decides for the caller. */
 async function stubAuth(page: Page, role: 'TEACHER' | 'STUDENT', email: string, name: string): Promise<void> {
@@ -96,7 +96,7 @@ test.describe('teacher review flow', () => {
   })
 
   test('reaches the submissions list from the test page and sees the roster', async ({ page }) => {
-    await signIn(page, TEACHER, /\/app\/classrooms$/)
+    await signIn(page, TEACHER, /\/app\/dashboard$/)
 
     await page.goto(`/app/classrooms/${SEEDED_CLASSROOM_ID}/tests/${SEEDED_REVIEW_TEST_ID}`)
     // "View submissions" is a styled Link, so it is a link role, not a button.
@@ -117,7 +117,7 @@ test.describe('teacher review flow', () => {
   })
 
   test('grades a student, releases the results, and locks the grading', async ({ page }) => {
-    await signIn(page, TEACHER, /\/app\/classrooms$/)
+    await signIn(page, TEACHER, /\/app\/dashboard$/)
     await page.goto(REVIEW_URL)
 
     await page.getByRole('link', { name: 'Grade Riya Sharma' }).click()

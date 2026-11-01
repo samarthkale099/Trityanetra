@@ -12,6 +12,9 @@ const PORT = 4173
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  // Each test boots Monaco in a real browser; more than two at once starves a laptop
+  // and the failures are timeouts, not bugs. Override with PW_WORKERS.
+  workers: Number(process.env.PW_WORKERS ?? 2),
   timeout: 45_000,
   expect: { timeout: 10_000 },
   retries: 0,
