@@ -327,8 +327,12 @@ export const enterTestService = async (testId: string, user: UserIdentity) => {
   const submission = await db.collection(COLLECTIONS.SUBMISSIONS).doc(`${testId}_${user.uid}`).get();
   const submissionData = submission.exists ? submission.data() : null;
 
+  const test = sanitizeTestForStudent(testId, testData);
   return {
-    test: sanitizeTestForStudent(testId, testData),
+    // The test's fields stay at the top level too, as the original entry
+    // response returned them; `test` carries the same object for new clients.
+    ...test,
+    test,
     serverTime: new Date().toISOString(),
     startedAt: startedAt.toISOString(),
     deadline: attemptDeadline(testData, startedAt).toISOString(),

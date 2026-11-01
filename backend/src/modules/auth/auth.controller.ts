@@ -42,7 +42,9 @@ const resolveCollegeId = async (collegeId: string | undefined, email: string) =>
     const match = await db.collection(COLLECTIONS.COLLEGES).where('emailDomain', '==', domain).limit(1).get();
     if (!match.empty) return { collegeId: match.docs[0].id };
   }
-  return { error: 'We could not find your college from that email. Use your college email address.' };
+  return {
+    error: 'No collegeId was given and no college matches that email domain. Use your college email address.',
+  };
 };
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
