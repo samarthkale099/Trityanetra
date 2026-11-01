@@ -1,10 +1,36 @@
 import { Worker, Job } from 'bullmq';
 import * as admin from 'firebase-admin';
 import { redis } from '../../lib/redis';
-import { env } from '../../config/env';
 import { COLLECTIONS } from '../../db/collections';
 import { PlagiarismStatus } from './plagiarism.service';
 import { PlagiarismResponseSchema } from './plagiarism.schema';
+import { callAstEngine } from './plagiarism.astClient';
+import type { AstSubmission } from './plagiarism.types';
+
+/**
+ * The code to compare from a submission's `answers`. Two shapes are accepted:
+ *
+ *   { code, language }                                  -- one program per test
+ *   { language, questions: { [questionId]: { code } } } -- one per question
+ *
+ * For the per-question shape the programs are joined in question order, so a
+ * test with one question per experiment (the recommended setup) compares
+ * exactly that experiment's code.
+ */
+export const extractCode = (answers: any): { code: unknown; language: unknown } => {
+  if (answers && typeof answers.code === 'string') {
+    return { code: answers.code, language: answers.language };
+  }
+  const questions = answers?.questions;
+  if (questions && typeof questions === 'object') {
+    const parts = Object.keys(questions)
+      .sort()
+      .map((key) => questions[key]?.code)
+      .filter((part): part is string => typeof part === 'string' && part.trim() !== '');
+    return { code: parts.join('\n\n'), language: answers.language };
+  }
+  return { code: undefined, language: answers?.language };
+};
 
 // The AST engine rejects batches above this size with a 422 (MAX_BATCH_SIZE, config.py:24 in the engine).
 // Splitting into chunks is NOT a safe workaround: pairs that straddle chunks would silently never be compared.
@@ -34,7 +60,7 @@ export const plagiarismProcessor = async (job: Job) => {
       .where('status', '==', 'SUBMITTED')
       .get();
     
-    const submissions: any[] = [];
+    const submissions: AstSubmission[] = [];
     const skipped: Record<string, string> = {};
 
     submissionsSnapshot.docs.forEach(doc => {
@@ -44,8 +70,7 @@ export const plagiarismProcessor = async (job: Job) => {
         return; // defensive skip, though query should filter this
       }
 
-      const code = data.answers?.code;
-      const language = data.answers?.language;
+      const { code, language } = extractCode(data.answers);
 
       if (!code || typeof code !== 'string' || code.trim() === '') {
         skipped[doc.id] = 'Missing or empty code';
@@ -87,24 +112,7 @@ export const plagiarismProcessor = async (job: Job) => {
       return;
     }
 
-    if (!env.AST_ENGINE_URL || !env.AST_ENGINE_SECRET) {
-      throw new Error('AST_ENGINE_URL or AST_ENGINE_SECRET not configured');
-    }
-
-    const response = await fetch(`${env.AST_ENGINE_URL}/api/v1/plagiarism/check`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Secret': env.AST_ENGINE_SECRET
-      },
-      body: JSON.stringify({ submissions })
-    });
-
-    if (!response.ok) {
-      throw new Error(`AST Engine returned ${response.status}`);
-    }
-
-    const result = await response.json();
+    const result = await callAstEngine(submissions);
 
     const parsed = PlagiarismResponseSchema.safeParse(result);
 

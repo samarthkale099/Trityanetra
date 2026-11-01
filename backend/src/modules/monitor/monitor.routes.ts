@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { submitFlag } from './monitor.controller';
+import { submitFlag, listFlags } from './monitor.controller';
 import { authenticateJwt } from '../auth/jwt.middleware';
 import { requireRole } from '../../middleware/rbac.middleware';
 import { Role } from '../../types/roles';
@@ -26,5 +26,8 @@ router.post(
   validateBody(flagSchema),
   submitFlag
 );
+
+// Read-only integrity report for the test's teacher (ownership checked in the service).
+router.get('/:testId/flags', authenticateJwt, requireRole([Role.TEACHER, Role.ADMIN]), listFlags);
 
 export default router;
