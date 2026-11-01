@@ -2,8 +2,30 @@ import { Request, Response, NextFunction } from 'express';
 import {
   createTestService,
   getTestsService,
-  enterTestService
+  enterTestService,
+  releaseResultsService,
 } from './test.service';
+import { getStudentResultService } from '../submission/submission.service';
+
+/** Teacher: release marks and comments for a test (idempotent). */
+export const releaseResults = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await releaseResultsService(req.params.testId, req.user!);
+    res.status(200).json({ message: 'Results released', data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Student: their own result for a test. */
+export const getMyResult = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await getStudentResultService(req.params.testId, req.user!);
+    res.status(200).json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const createTest = async (req: Request, res: Response, next: NextFunction) => {
   try {

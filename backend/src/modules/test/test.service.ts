@@ -96,6 +96,42 @@ const studentSummary = (id: string, test: FirebaseFirestore.DocumentData) => {
   };
 };
 
+/**
+ * A test the requester owns (its teacher) or administers. Another college's
+ * test is reported as missing so its existence is not confirmed.
+ */
+export const loadOwnedTest = async (testId: string, user: UserIdentity) => {
+  const ref = db.collection(COLLECTIONS.TESTS).doc(testId);
+  const doc = await ref.get();
+  if (!doc.exists) throwError('Test not found', 404);
+  const data = doc.data()!;
+  if (user.collegeId && data.collegeId !== user.collegeId) throwError('Test not found', 404);
+  if (data.teacherId !== user.uid && user.role !== Role.ADMIN) {
+    throwError('Forbidden: You do not own this test', 403);
+  }
+  return { ref, data };
+};
+
+/** Maximum marks for a test: the sum of its question points (10 per question if unset). */
+export const maxMarksOf = (test: FirebaseFirestore.DocumentData) => {
+  const questions: any[] = Array.isArray(test.questions) ? test.questions : [];
+  const total = questions.reduce((sum, q) => sum + (Number(q?.points) > 0 ? Number(q.points) : 10), 0);
+  return total > 0 ? total : 10;
+};
+
+/**
+ * Releases a test's marks and comments to its students. Idempotent: the first
+ * release time is kept. After release, grades are locked.
+ */
+export const releaseResultsService = async (testId: string, user: UserIdentity) => {
+  const { ref, data } = await loadOwnedTest(testId, user);
+  if (!data.resultsReleasedAt) {
+    await ref.update({ resultsReleasedAt: admin.firestore.FieldValue.serverTimestamp() });
+  }
+  const fresh = await ref.get();
+  return { testId, resultsReleasedAt: toIso(fresh.data()?.resultsReleasedAt) };
+};
+
 /** Classroom ids a student is enrolled in (within their college). */
 export const enrolledClassroomIds = async (user: UserIdentity) => {
   let query: FirebaseFirestore.Query = db
