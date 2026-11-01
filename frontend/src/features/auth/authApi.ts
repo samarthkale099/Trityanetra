@@ -1,4 +1,4 @@
-import { firebaseAuthDriver, type AuthDriver, type AuthUser } from '@/shared/lib/authDriver'
+import { backendAuthDriver, type AuthDriver, type AuthUser } from '@/shared/lib/authDriver'
 import { http } from '@/shared/lib/httpClient'
 import type { UserProfile } from '@/shared/types'
 
@@ -22,9 +22,9 @@ export interface SignUpInput {
   collegeDomain: string
 }
 
-let driver: AuthDriver = firebaseAuthDriver
+let driver: AuthDriver = backendAuthDriver
 
-/** Test seam: swap the Firebase driver for an in-memory fake. */
+/** Test seam: swap the backend auth driver for an in-memory fake. */
 export function setAuthDriver(next: AuthDriver): void {
   driver = next
 }
@@ -53,9 +53,15 @@ export function describeAuthError(error: unknown): string {
     case 'auth/network-request-failed':
       return 'Could not reach the authentication service. Check your connection.'
     case 'auth/operation-not-allowed':
-      return 'Email and password sign-in is not enabled for this project yet.'
+      return error instanceof Error && error.message
+        ? error.message
+        : 'Email and password sign-in is not enabled for this project yet.'
     case 'auth/user-disabled':
       return 'This account has been disabled. Contact your administrator.'
+    case undefined:
+      // A plain Error carries the server's own explanation (e.g. "We could not
+      // find your college from that email"), which is more useful than a generic line.
+      return error instanceof Error && error.message ? error.message : 'Authentication failed. Please try again.'
     default:
       return error instanceof Error && error.message.startsWith('Account created')
         ? error.message
@@ -82,19 +88,28 @@ export function profileFor(user: AuthUser): UserProfile {
   }
 }
 
-/** Session open: exchange a Firebase ID token for the server-side user profile. */
+/**
+ * Session open: read the server-side profile (role, college) for this token.
+ * The backend's `GET /api/auth/me` answers `{ user }`; role and college come
+ * from the users document, never from the client.
+ */
 async function openSession(idToken: string): Promise<UserProfile> {
-  // `http.post(path, options)` takes options, not a payload, so the body is only
-  // what is set in `options.body` — which stays unset. The backend reads the
-  // token from the `Authorization` header alone: a token in a request body is
-  // far more likely to be captured by logging middleware than one in a header.
-  const payload = await http.post<{ user: UserProfile }>('/api/auth/session', {
+  const payload = await http.get<{ user: Partial<UserProfile> & { uid: string; email: string } }>('/api/auth/me', {
     token: idToken,
     // A 401 here means the token was rejected, not that it merely expired.
-    // Retrying the exchange would only re-send a credential the server refused.
+    // Retrying would only re-send a credential the server refused.
     retryOnUnauthorized: false,
   })
-  return payload.user
+  const user = payload.user
+  return {
+    uid: user.uid,
+    email: user.email,
+    displayName: user.displayName?.trim() || user.email.split('@')[0] || user.email,
+    role: user.role ?? 'STUDENT',
+    collegeId: user.collegeId ?? null,
+    createdAt: user.createdAt ?? '',
+    updatedAt: user.updatedAt ?? '',
+  }
 }
 
 /**
