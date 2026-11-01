@@ -474,7 +474,7 @@ export function TestReviewPage() {
                 to={`/app/classrooms/${encodeURIComponent(classroomId)}/tests/${encodeURIComponent(testId)}/submissions`}
               >
                 <ListChecks className="h-4 w-4" aria-hidden="true" />
-                Submissions &amp; grading
+                View submissions
               </Link>
             </Button>
           ) : null
