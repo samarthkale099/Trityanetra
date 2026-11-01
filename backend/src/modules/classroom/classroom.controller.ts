@@ -11,11 +11,15 @@ import { CLASSROOM_ACTIONS, ClassroomAction } from '../../config/constants';
 
 export const createClassroom = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { name, students = [] } = req.body;
+    const { name, students = [], subject, description } = req.body;
     const teacherId = req.user?.uid;
     const collegeId = req.user?.collegeId || null;
 
-    const data = await createClassroomService(name, students, teacherId, collegeId);
+    const data = await createClassroomService(name, students, teacherId, collegeId, {
+      subject: typeof subject === 'string' ? subject : undefined,
+      description: typeof description === 'string' ? description : undefined,
+      teacherName: req.user?.displayName ?? req.user?.email ?? '',
+    });
 
     res.status(201).json({ message: 'Classroom created successfully', data });
   } catch (error) {

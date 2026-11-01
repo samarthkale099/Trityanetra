@@ -4,7 +4,18 @@ import {
   getTestsService,
   enterTestService,
   releaseResultsService,
+  getLobbyService,
 } from './test.service';
+
+/** Student: the lobby (no questions, timer not started). */
+export const getLobby = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await getLobbyService(req.params.testId, req.user!);
+    res.status(200).json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
 import { getStudentResultService } from '../submission/submission.service';
 
 /** Teacher: release marks and comments for a test (idempotent). */

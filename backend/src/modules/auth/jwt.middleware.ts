@@ -27,6 +27,7 @@ export const authenticateJwt = (req: Request, res: Response, next: NextFunction)
       email: payload.email,
       role: payload.role,
       collegeId: payload.collegeId || undefined,
+      displayName: payload.displayName || undefined,
     };
 
     next();

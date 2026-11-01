@@ -15,7 +15,8 @@ export const createClassroomService = async (
   name: string,
   students: string[],
   teacherId: string | undefined,
-  collegeId: string | null
+  collegeId: string | null,
+  details: { subject?: string; description?: string; teacherName?: string } = {}
 ) => {
 
   if (students.length > 0) {
@@ -31,6 +32,9 @@ export const createClassroomService = async (
 
   const docRef = await db.collection(COLLECTIONS.CLASSROOMS).add({
     name,
+    subject: (details.subject ?? '').slice(0, 80),
+    description: (details.description ?? '').slice(0, 500),
+    teacherName: details.teacherName ?? '',
     teacherId,
     collegeId,
     students,
@@ -54,7 +58,48 @@ export const getClassroomsService = async (user: UserIdentity) => {
   }
 
   const snapshot = await query.get();
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  const createdAt = (value: any) => (value?.toDate ? value.toDate().toISOString() : value ?? null);
+
+  // SECURITY: a student receives only what describes the classroom -- never the
+  // roster (classmates' uids) or the invited emails.
+  if (user.role === Role.STUDENT) {
+    return snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: data.name,
+        subject: data.subject ?? '',
+        description: data.description ?? '',
+        teacherName: data.teacherName ?? '',
+        collegeId: data.collegeId ?? null,
+        createdAt: createdAt(data.createdAt),
+      };
+    });
+  }
+
+  // Teachers/admins: the full document plus the counts the dashboard shows.
+  const testCounts = new Map<string, number>();
+  if (!snapshot.empty) {
+    let testsQuery: FirebaseFirestore.Query = db.collection(COLLECTIONS.TESTS);
+    if (user.role === Role.TEACHER) testsQuery = testsQuery.where('teacherId', '==', user.uid);
+    else if (user.collegeId) testsQuery = testsQuery.where('collegeId', '==', user.collegeId);
+    const tests = await testsQuery.select('classroomId').get();
+    for (const test of tests.docs) {
+      const classroomId = test.data().classroomId;
+      testCounts.set(classroomId, (testCounts.get(classroomId) ?? 0) + 1);
+    }
+  }
+  return snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+      createdAt: createdAt(data.createdAt),
+      studentCount: Array.isArray(data.students) ? data.students.length : 0,
+      invitedCount: Array.isArray(data.invitedEmails) ? data.invitedEmails.length : 0,
+      testCount: testCounts.get(doc.id) ?? 0,
+    };
+  });
 };
 
 export const updateClassroomStudentsService = async (

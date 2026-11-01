@@ -178,6 +178,33 @@ describe('Phase 3 integration: enrolment, visibility, exam, grading', () => {
       expect(res.body.data.test.questions[0].testCases[1]).toEqual({ id: 'c2', hidden: true, input: null, expected: null });
     });
 
+    it("gives a student the classroom's details but never the roster or invites", async () => {
+      await db
+        .collection(COLLECTIONS.CLASSROOMS)
+        .doc(classroomId)
+        .update({ students: [riya.uid, kabir.uid], invitedEmails: ['someone@int.edu'] });
+      const res = await request(app).get('/api/classrooms').set('Authorization', `Bearer ${tokenFor(riya)}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data).toHaveLength(1);
+      expect(res.body.data[0].name).toBe('Python Lab');
+      expect(res.body.data[0].students).toBeUndefined();
+      expect(res.body.data[0].invitedEmails).toBeUndefined();
+      expect(JSON.stringify(res.body)).not.toContain(kabir.uid);
+    });
+
+    it('serves the lobby without questions and without starting the timer', async () => {
+      await db.collection(COLLECTIONS.CLASSROOMS).doc(classroomId).update({ students: [riya.uid] });
+      const testId = await seedTest(30, 90); // not open yet: the lobby still answers
+      const res = await request(app).get(`/api/tests/${testId}/lobby`).set('Authorization', `Bearer ${tokenFor(riya)}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.test.questions).toBeUndefined();
+      expect(res.body.data.test.questionCount).toBe(1);
+      expect(res.body.data.startedAt).toBeNull();
+      expect(JSON.stringify(res.body)).not.toContain('Sort the list');
+      const attempt = await db.collection(COLLECTIONS.ATTEMPTS).doc(`${testId}_${riya.uid}`).get();
+      expect(attempt.exists).toBe(false);
+    });
+
     it('refuses entry to a student who was not added', async () => {
       const testId = await seedTest(-5, 60);
       const res = await request(app).get(`/api/tests/${testId}/entry`).set('Authorization', `Bearer ${tokenFor(kabir)}`);

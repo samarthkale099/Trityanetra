@@ -179,7 +179,81 @@ export const getTestsService = async (user: UserIdentity) => {
   }
 
   const snapshot = await query.get();
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+  // Submitted counts per test, read in batches (Firestore `in` takes 30 values).
+  const submitted = new Map<string, number>();
+  const ids = snapshot.docs.map((doc) => doc.id);
+  for (let i = 0; i < ids.length; i += 30) {
+    const batch = await db
+      .collection(COLLECTIONS.SUBMISSIONS)
+      .where('testId', 'in', ids.slice(i, i + 30))
+      .select('testId', 'status')
+      .get();
+    for (const doc of batch.docs) {
+      const { testId, status } = doc.data();
+      if (status === 'SUBMITTED' || status === 'FINALIZED') submitted.set(testId, (submitted.get(testId) ?? 0) + 1);
+    }
+  }
+
+  return snapshot.docs.map((doc) => {
+    const data = doc.data();
+    const questions: any[] = Array.isArray(data.questions) ? data.questions : [];
+    return {
+      id: doc.id,
+      ...data,
+      // ISO copies of the Firestore timestamps, which do not serialise usefully.
+      windowStart: toIso(data.startTime),
+      windowEnd: toIso(data.endTime),
+      createdAt: toIso(data.createdAt),
+      resultsReleasedAt: toIso(data.resultsReleasedAt),
+      questionCount: questions.length,
+      totalPoints: maxMarksOf(data),
+      submittedCount: submitted.get(doc.id) ?? 0,
+    };
+  });
+};
+
+/**
+ * The exam lobby for a student: what the test is, the server clock, and their
+ * own attempt/submission state -- WITHOUT the questions and WITHOUT starting
+ * the timer. Membership is checked by the route guard; the window is not, so
+ * an upcoming test can show its countdown.
+ */
+export const getLobbyService = async (testId: string, user: UserIdentity) => {
+  const testDoc = await db.collection(COLLECTIONS.TESTS).doc(testId).get();
+  if (!testDoc.exists) throwError('Test not found', 404);
+  const test = testDoc.data()!;
+  if (user.collegeId && test.collegeId !== user.collegeId) throwError('Test not found', 404);
+
+  const [classroom, attempt, submission] = await Promise.all([
+    db.collection(COLLECTIONS.CLASSROOMS).doc(test.classroomId).get(),
+    db.collection(COLLECTIONS.ATTEMPTS).doc(`${testId}_${user.uid}`).get(),
+    db.collection(COLLECTIONS.SUBMISSIONS).doc(`${testId}_${user.uid}`).get(),
+  ]);
+  const questions: any[] = Array.isArray(test.questions) ? test.questions : [];
+  const startedAt = attempt.exists && attempt.data()?.startedAt ? toDate(attempt.data()!.startedAt) : null;
+
+  return {
+    test: {
+      id: testId,
+      title: test.title,
+      classroomId: test.classroomId,
+      classroomName: classroom.exists ? classroom.data()?.name ?? '' : '',
+      instructions: test.instructions ?? '',
+      language: test.language ?? 'python',
+      windowStart: toIso(test.startTime),
+      windowEnd: toIso(test.endTime),
+      durationMinutes: test.durationMinutes ?? null,
+      questionCount: questions.length,
+      totalPoints: maxMarksOf(test),
+    },
+    serverTime: new Date().toISOString(),
+    startedAt: startedAt ? startedAt.toISOString() : null,
+    deadline: startedAt ? attemptDeadline(test, startedAt).toISOString() : null,
+    submission: submission.exists
+      ? { status: submission.data()?.status ?? null, submittedAt: toIso(submission.data()?.submittedAt) }
+      : null,
+  };
 };
 
 /**
