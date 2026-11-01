@@ -1,5 +1,5 @@
 import type { AuthDriver, AuthUser, SignUpInput } from '@/shared/lib/authDriver'
-import { firebaseAuthDriver } from '@/shared/lib/authDriver'
+import { backendAuthDriver } from '@/shared/lib/authDriver'
 import { setAuthDriver } from '@/features/auth/authApi'
 
 /**
@@ -175,5 +175,5 @@ export function installFakeAuth(seed: Partial<FakeAuthState> = {}): FakeAuthDriv
 }
 
 export function restoreRealAuthDriver(): void {
-  setAuthDriver(firebaseAuthDriver)
+  setAuthDriver(backendAuthDriver)
 }

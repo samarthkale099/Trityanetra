@@ -81,7 +81,7 @@ function findAccount(email: string): StoredAccount | undefined {
   return accounts().find((account) => account.email === normalized)
 }
 
-export const firebaseAuthDriver: AuthDriver = {
+export const backendAuthDriver: AuthDriver = {
   initialize: async () => {
     // Nothing to negotiate: the session is already in localStorage.
   },

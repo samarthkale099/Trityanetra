@@ -463,18 +463,7 @@ function secondToLastSegment(route: Route): string {
   return decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) ?? '')
 }
 
-function submissionFor(testId: string, email: string, state: E2EBackendState) {
-  return state.submissions.find((s) => s.testId === testId && s.uid === email) ?? null
-}
 
-function lobbyFor(test: Test, email: string, state: E2EBackendState) {
-  return {
-    test: detailOf(test),
-    serverTime: new Date().toISOString(),
-    startedAt: state.startedAt.get(`${test.id}:${email}`) ?? null,
-    submission: submissionFor(test.id, email, state),
-  }
-}
 
 /** The stable id for a student's (possible) submission on a test. */
 function submissionIdFor(testId: string, email: string, state: E2EBackendState): string {
@@ -558,12 +547,6 @@ function reviewDetailFor(test: Test, member: RosterEntry, state: E2EBackendState
   }
 }
 
-/** Resolves the roster member a submission id names, without parsing the id. */
-function reviewMemberOf(test: Test, submissionId: string, state: E2EBackendState): RosterEntry | undefined {
-  return state.roster.find(
-    (member) => member.classroomId === test.classroomId && submissionIdFor(test.id, member.email, state) === submissionId,
-  )
-}
 
 /**
  * A student's own result, scoped to `email`.
@@ -610,103 +593,96 @@ function resultFor(test: Test, email: string, state: E2EBackendState) {
 }
 
 /**
- * Routes the classroom/test contract.
+ * Routes the backend's API (the real Express routes, `{ data }` envelopes).
  *
  * ORDER MATTERS. Playwright matches the most recently registered handler first,
- * so generic patterns are registered before the specific ones that must win:
- * a `classrooms` + one-segment pattern would otherwise swallow the
- * `/api/classrooms/mine` sub-resource and answer a student with 403.
+ * so generic patterns are registered before the specific ones that must win.
  *
  * Every branch answers explicitly, including 405s, so no request can fall
  * through to the real network and surface as an opaque `requestfailed`.
  */
 export async function stubTestBackend(page: Page, state: E2EBackendState = seedState()): Promise<E2EBackendState> {
-  // Registered FIRST, so it is matched LAST: this is the safety net for
-  // endpoints the app calls that this suite has not modelled. Anything the
-  // stubs below match takes precedence, so /api/auth/session is not swallowed.
-  // A request that lands here is reported loudly rather than passed through to a
-  // real network that does not exist, where it would surface as an opaque
-  // `requestfailed` instead of a named gap.
+  // Registered FIRST, so it is matched LAST: the safety net for endpoints this
+  // suite has not modelled. Anything below takes precedence.
   await page.route('**/api/**', (route) => notImplemented(route))
 
-  // --- generic: 3 segments, e.g. /api/classrooms/:id/tests
-  await page.route('**/api/classrooms/*/tests', async (route) => {
-    const email = requireAuth(route)
-    if (!email) return
-    if (!requireTeacher(route, email)) return
-    const classroomId = secondToLastSegment(route)
-    const classroom = state.classrooms.find((c) => c.id === classroomId)
-    if (!classroom) return notFound(route, 'That classroom could not be found.')
+  const isTeacher = (email: string) => ROLES[email] === 'TEACHER' || ROLES[email] === 'ADMIN'
+  const enrolled = (classroomId: string, email: string) =>
+    state.roster.some((r) => r.classroomId === classroomId && r.email === email)
+  const submittedStatus = (testId: string, email: string) => {
+    const record = state.reviews[`${testId}:${email}`]
+    const live = state.submissions.find((s) => s.testId === testId && s.uid === email && s.status !== 'FAILED')
+    if (!record && !live) return null
+    return { status: 'SUBMITTED', submittedAt: record?.submittedAt ?? (live?.submittedAt as string) }
+  }
+  const maskQuestions = (test: Test) =>
+    test.questions.map((q) => ({
+      ...q,
+      testCases: q.testCases.map((c) => (c.hidden ? { id: c.id, hidden: true, input: null, expected: null } : c)),
+    }))
+  const flagCounts = (testId: string, uid: string) => {
+    const counts: Record<string, number> = {}
+    for (const event of state.monitorEvents) {
+      if (event.testId === testId && event.uid === uid) {
+        const type = String(event.flagType)
+        counts[type] = (counts[type] ?? 0) + 1
+      }
+    }
+    return counts
+  }
+  const memberByUid = (test: Test, uid: string) =>
+    state.roster.find((m) => m.classroomId === test.classroomId && (m.uid === uid || submissionIdFor(test.id, m.email, state) === uid))
+  const segments = (route: Route) => new URL(route.request().url()).pathname.split('/').map(decodeURIComponent)
 
-    if (route.request().method() === 'GET') {
-      return json(route, state.tests.filter((t) => t.classroomId === classroom.id).map((t) => summaryOf(t, state, email)))
-    }
-    if (route.request().method() !== 'POST') return methodNotAllowed(route, 'GET, POST')
+  /* ---------------------------------------------------------------- classrooms */
 
-    const body = (route.request().postDataJSON() ?? {}) as {
-      title?: string
-      language?: Language
-      windowStart?: string
-      windowEnd?: string
-      durationMinutes?: number
-      questions?: { prompt?: string; starterCode?: string; points?: number }[]
-    }
-    const questions = body.questions ?? []
-    if ((body.title ?? '').trim().length === 0) return fail(route, 'The test needs a title.')
-    if (questions.length === 0) return fail(route, 'Add at least one question.')
-    if (questions.some((q) => (q.prompt ?? '').trim().length === 0)) {
-      return fail(route, 'Every question needs a prompt.')
-    }
-    const created: Test = {
-      id: `test-created-${state.tests.length + 1}`,
-      classroomId: classroom.id,
-      classroomName: classroom.name,
-      title: String(body.title),
-      instructions: String(body.instructions ?? ''),
-      language: body.language ?? 'javascript',
-      windowStart: String(body.windowStart),
-      windowEnd: String(body.windowEnd),
-      durationMinutes: Number(body.durationMinutes) || 60,
-      createdAt: new Date().toISOString(),
-      questions: questions.map((q, index) => ({
-        id: `q-created-${state.tests.length + 1}-${index}`,
-        prompt: String(q.prompt),
-        starterCode: String(q.starterCode ?? ''),
-        language: body.language ?? 'javascript',
-        testCases: [],
-        points: Number(q.points) || 10,
-        order: index,
-      })),
-    }
-    state.tests.push(created)
-    return json(route, summaryOf(created, state, email), 201)
-  })
-
-  // --- generic: 2 segments, e.g. /api/classrooms/:id
+  // /api/classrooms/:id (teacher detail)
   await page.route('**/api/classrooms/*', (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (!requireTeacher(route, email)) return
     if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
     const classroom = state.classrooms.find((c) => c.id === lastSegment(route))
-    if (!classroom) return notFound(route, 'That classroom could not be found.')
-    return json(route, classroomDetailFor(classroom, state, email))
+    if (!classroom) return notFound(route, 'Classroom not found')
+    return json(route, { data: classroomDetailFor(classroom, state, email) })
   })
 
-  // --- generic: /api/classrooms (collection)
+  // /api/classrooms (one route for both roles; a student never gets the roster)
   await page.route('**/api/classrooms', async (route) => {
     const email = requireAuth(route)
     if (!email) return
-    if (!requireTeacher(route, email)) return
     if (route.request().method() === 'GET') {
-      return json(route, state.classrooms.map((c) => withCounts(c, state)))
+      if (isTeacher(email)) {
+        return json(route, {
+          data: state.classrooms.map((c) => {
+            const roster = state.roster.filter((r) => r.classroomId === c.id)
+            return {
+              ...withCounts(c, state),
+              students: roster.filter((r) => !r.pending).map((r) => r.uid),
+              invitedEmails: roster.filter((r) => r.pending).map((r) => r.email),
+              studentCount: roster.filter((r) => !r.pending).length,
+              invitedCount: roster.filter((r) => r.pending).length,
+            }
+          }),
+        })
+      }
+      return json(route, {
+        data: state.classrooms
+          .filter((c) => enrolled(c.id, email))
+          .map(({ id, name, subject, description, teacherName, collegeId, createdAt }) => ({
+            id,
+            name,
+            subject,
+            description,
+            teacherName,
+            collegeId,
+            createdAt,
+          })),
+      })
     }
     if (route.request().method() !== 'POST') return methodNotAllowed(route, 'GET, POST')
-    const body = (route.request().postDataJSON() ?? {}) as {
-      name?: string
-      subject?: string
-      description?: string
-    }
+    if (!requireTeacher(route, email)) return
+    const body = (route.request().postDataJSON() ?? {}) as { name?: string; subject?: string; description?: string }
     if ((body.name ?? '').trim().length === 0) return fail(route, 'The classroom needs a name.')
     const created: Classroom = {
       id: `class-created-${state.classrooms.length + 1}`,
@@ -716,36 +692,35 @@ export async function stubTestBackend(page: Page, state: E2EBackendState = seedS
       description: String(body.description ?? ''),
       teacherId: `uid-${email}`,
       teacherName: 'Aditya Rao',
-      joinCode: `JOIN-${state.classrooms.length + 1}`,
       studentCount: 0,
       testCount: 0,
       createdAt: new Date().toISOString(),
     }
     state.classrooms.push(created)
-    return json(route, created, 201)
+    return json(route, { message: 'Classroom created successfully', data: { id: created.id } }, 201)
   })
 
-  // --- enrolment: teacher adds students by email (3 segments, wins over /:id)
+  // /api/classrooms/:id/students (enrol by email)
   await page.route('**/api/classrooms/*/students', async (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (!requireTeacher(route, email)) return
     if (route.request().method() !== 'POST') return methodNotAllowed(route, 'POST')
     const classroom = state.classrooms.find((c) => c.id === secondToLastSegment(route))
-    if (!classroom) return notFound(route, 'That classroom could not be found.')
+    if (!classroom) return notFound(route, 'Classroom not found')
     const body = (route.request().postDataJSON() ?? {}) as { emails?: unknown }
     const emails = Array.isArray(body.emails)
       ? [...new Set(body.emails.map((value) => String(value).trim().toLowerCase()).filter(Boolean))]
       : []
-    if (emails.length === 0) return fail(route, 'Enter at least one student email.')
-    if (emails.some((value) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))) {
-      return fail(route, 'One or more of those emails is not valid.')
-    }
-    const added: string[] = []
-    const alreadyEnrolled: string[] = []
+    if (emails.length === 0) return fail(route, 'Enter at least one student email')
+    const result = { added: [] as string[], invited: [] as string[], alreadyEnrolled: [] as string[], rejected: [] as { email: string; reason: string }[] }
     for (const student of emails) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(student)) {
+        result.rejected.push({ email: student, reason: 'Not a valid email address' })
+        continue
+      }
       if (state.roster.some((r) => r.classroomId === classroom.id && r.email === student)) {
-        alreadyEnrolled.push(student)
+        result.alreadyEnrolled.push(student)
         continue
       }
       const name = KNOWN_ACCOUNTS[student]
@@ -757,222 +732,441 @@ export async function stubTestBackend(page: Page, state: E2EBackendState = seedS
         joinedAt: new Date().toISOString(),
         pending: !name,
       })
-      added.push(student)
+      ;(name ? result.added : result.invited).push(student)
     }
-    return json(
-      route,
-      { classroom: classroomDetailFor(classroom, state, email), added, alreadyEnrolled },
-      added.length > 0 ? 201 : 200,
-    )
+    const changed = result.added.length + result.invited.length > 0
+    return json(route, { message: 'Students updated', result, data: classroomDetailFor(classroom, state, email) }, changed ? 201 : 200)
   })
 
+  // /api/classrooms/:id/students/:email (remove)
   await page.route('**/api/classrooms/*/students/*', (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (!requireTeacher(route, email)) return
     if (route.request().method() !== 'DELETE') return methodNotAllowed(route, 'DELETE')
-    const parts = new URL(route.request().url()).pathname.split('/')
-    const classroom = state.classrooms.find((c) => c.id === decodeURIComponent(parts.at(-3) ?? ''))
-    if (!classroom) return notFound(route, 'That classroom could not be found.')
-    const student = decodeURIComponent(parts.at(-1) ?? '').toLowerCase()
+    const parts = segments(route)
+    const classroom = state.classrooms.find((c) => c.id === parts.at(-3))
+    if (!classroom) return notFound(route, 'Classroom not found')
+    const student = String(parts.at(-1) ?? '').toLowerCase()
     const before = state.roster.length
     state.roster = state.roster.filter((r) => !(r.classroomId === classroom.id && r.email === student))
-    if (state.roster.length === before) return notFound(route, 'That student is not in this classroom.')
-    return json(route, classroomDetailFor(classroom, state, email))
+    if (state.roster.length === before) return notFound(route, 'That student is not in this classroom')
+    return json(route, { message: 'Student removed', data: classroomDetailFor(classroom, state, email) })
   })
 
-  // --- specific: wins over `**/api/classrooms/*`
-  await page.route('**/api/classrooms/mine', (route) => {
-    const email = requireAuth(route)
-    if (!email) return
-    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
-    const joined = new Set(state.roster.filter((r) => r.email === email).map((r) => r.classroomId))
-    return json(
-      route,
-      state.classrooms.filter((c) => joined.has(c.id)).map((c) => withCounts(c, state)),
-    )
-  })
+  /* --------------------------------------------------------------------- tests */
 
-  // --- test sub-resources, most specific first
-  await page.route('**/api/tests/*/monitor-events', (route) => {
+  // /api/tests (list for both roles; create for teachers)
+  await page.route('**/api/tests', async (route) => {
     const email = requireAuth(route)
     if (!email) return
-    if (route.request().method() !== 'POST') return methodNotAllowed(route, 'POST')
-    const body = (route.request().postDataJSON() ?? {}) as { events?: Record<string, unknown>[] }
-    for (const event of body.events ?? []) state.monitorEvents.push({ uid: email, ...event })
-    return route.fulfill({ status: 204, body: '' })
-  })
-
-  await page.route('**/api/tests/*/submissions', (route) => {
-    const email = requireAuth(route)
-    if (!email) return
-    const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
     if (route.request().method() === 'GET') {
-      // The review list: teacher/admin only, every roster member, roster order.
-      if (!requireTeacher(route, email)) return
-      return json(route, reviewListFor(test, state))
+      const teacher = isTeacher(email)
+      const visible = teacher ? state.tests : state.tests.filter((t) => enrolled(t.classroomId, email))
+      return json(route, {
+        data: visible.map((t) => {
+          const summary = summaryOf(t, state, email)
+          return {
+            ...summary,
+            startTime: summary.windowStart,
+            endTime: summary.windowEnd,
+            mySubmissionStatus: submittedStatus(t.id, email) ? 'SUBMITTED' : null,
+            ...(teacher ? { questions: t.questions, instructions: t.instructions } : {}),
+          }
+        }),
+      })
     }
     if (route.request().method() !== 'POST') return methodNotAllowed(route, 'GET, POST')
-    const body = (route.request().postDataJSON() ?? {}) as { code?: string; idempotencyKey?: string }
-    const idempotencyKey = body.idempotencyKey ?? ''
-    if (idempotencyKey.length === 0) return fail(route, 'A submission needs an idempotency key.')
-
-    // The same key is one submission however many times it arrives, so a
-    // double-clicked submit button cannot create two attempts at grading.
-    const existing = state.submissions.find(
-      (s) => s.testId === test.id && s.uid === email && s.idempotencyKey === idempotencyKey,
-    )
-    if (existing) return json(route, existing)
-    if (Date.now() >= Date.parse(test.windowEnd)) {
-      return fail(route, 'The window for this test has closed.')
+    if (!requireTeacher(route, email)) return
+    const body = (route.request().postDataJSON() ?? {}) as {
+      classroomId?: string
+      title?: string
+      instructions?: string
+      language?: Language
+      startTime?: string
+      endTime?: string
+      durationMinutes?: number
+      questions?: { id?: string; prompt?: string; starterCode?: string; points?: number; testCases?: TestCase[] }[]
     }
-    const totalPoints = test.questions.reduce((total, q) => total + q.points, 0)
-    const submission = {
-      id: `sub-${state.submissions.length + 1}`,
-      testId: test.id,
-      uid: email,
-      language: test.language,
-      code: body.code ?? '',
-      status: 'QUEUED',
-      idempotencyKey,
-      submittedAt: new Date().toISOString(),
-      score: null,
-      maxScore: totalPoints,
+    const classroom = state.classrooms.find((c) => c.id === body.classroomId)
+    if (!classroom) return notFound(route, 'Classroom not found')
+    const questions = body.questions ?? []
+    if ((body.title ?? '').trim().length === 0) return fail(route, 'The test needs a title.')
+    if (questions.length === 0) return fail(route, 'Add at least one question.')
+    if (questions.some((q) => (q.prompt ?? '').trim().length === 0)) return fail(route, 'Every question needs a prompt.')
+    const created: Test = {
+      id: `test-created-${state.tests.length + 1}`,
+      classroomId: classroom.id,
+      classroomName: classroom.name,
+      title: String(body.title),
+      instructions: String(body.instructions ?? ''),
+      language: body.language ?? 'python',
+      windowStart: String(body.startTime),
+      windowEnd: String(body.endTime),
+      durationMinutes: Number(body.durationMinutes) || 60,
+      createdAt: new Date().toISOString(),
+      questions: questions.map((q, index) => ({
+        id: q.id ?? `q${index + 1}`,
+        prompt: String(q.prompt),
+        starterCode: String(q.starterCode ?? ''),
+        language: body.language ?? 'python',
+        testCases: (q.testCases ?? []).map((c, i) => ({ ...c, id: c.id ?? `c${i + 1}` })),
+        points: Number(q.points) || 10,
+        order: index,
+      })),
     }
-    state.submissions.push(submission)
-    return json(route, submission, 201)
+    state.tests.push(created)
+    return json(route, { message: 'Test created successfully', data: { id: created.id } }, 201)
   })
 
-  await page.route('**/api/tests/*/attempts', (route) => {
-    const email = requireAuth(route)
-    if (!email) return
-    if (route.request().method() !== 'POST') return methodNotAllowed(route, 'POST')
-    const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    if (submissionFor(test.id, email, state)) {
-      return json(route, { message: 'You have already submitted this test.', code: 'CONFLICT' }, 409)
-    }
-    const now = Date.now()
-    if (now < Date.parse(test.windowStart)) return forbidden(route, 'This test has not opened yet.')
-    if (now >= Date.parse(test.windowEnd)) return forbidden(route, 'This test has closed.')
-    // Latched: a reload cannot buy a second allowance.
-    const key = `${test.id}:${email}`
-    if (!state.startedAt.has(key)) state.startedAt.set(key, new Date().toISOString())
-    return json(route, { ...lobbyFor(test, email, state), submission: null })
-  })
-
+  // /api/tests/:id/lobby (no questions, no timer start)
   await page.route('**/api/tests/*/lobby', (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
     const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    return json(route, lobbyFor(test, email, state))
+    if (!test) return notFound(route, 'Test not found')
+    if (!enrolled(test.classroomId, email)) return forbidden(route, "Forbidden: You are not a member of this test's classroom")
+    const detail = detailOf(test)
+    return json(route, {
+      data: {
+        test: {
+          id: detail.id,
+          title: detail.title,
+          classroomId: detail.classroomId,
+          classroomName: detail.classroomName,
+          instructions: detail.instructions,
+          language: detail.language,
+          windowStart: detail.windowStart,
+          windowEnd: detail.windowEnd,
+          durationMinutes: detail.durationMinutes,
+          questionCount: test.questions.length,
+          totalPoints: detail.totalPoints,
+        },
+        serverTime: new Date().toISOString(),
+        startedAt: state.startedAt.get(`${test.id}:${email}`) ?? null,
+        deadline: null,
+        submission: submittedStatus(test.id, email),
+      },
+    })
   })
 
-  // The student's own result. Teacher/admin use the review screens instead, and a
-  // caller with no submission gets a 404 so a peer's submission is not confirmed.
+  // /api/tests/:id/entry (starts the attempt; latched start time)
+  await page.route('**/api/tests/*/entry', (route) => {
+    const email = requireAuth(route)
+    if (!email) return
+    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
+    const test = findTest(testIdOf(route), state)
+    if (!test) return notFound(route, 'Test not found')
+    if (!enrolled(test.classroomId, email)) return forbidden(route, "Forbidden: You are not a member of this test's classroom")
+    const now = Date.now()
+    if (now < Date.parse(test.windowStart)) return forbidden(route, 'Forbidden: Test has not started yet')
+    if (now > Date.parse(test.windowEnd)) return forbidden(route, 'Forbidden: Test has already ended')
+    const key = `${test.id}:${email}`
+    if (!state.startedAt.has(key)) state.startedAt.set(key, new Date().toISOString())
+    const masked = { ...detailOf(test), questions: maskQuestions(test) }
+    return json(route, {
+      message: 'Entered exam successfully',
+      data: {
+        ...masked,
+        test: masked,
+        serverTime: new Date().toISOString(),
+        startedAt: state.startedAt.get(key),
+        submission: submittedStatus(test.id, email),
+      },
+    })
+  })
+
+  // /api/tests/:id/result (student's own; marks withheld until release)
   await page.route('**/api/tests/*/result', (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
-    if (ROLES[email]) return forbidden(route, 'Results are viewed through the review screens.')
+    if (ROLES[email]) return forbidden(route, 'Results are viewed through the review screens')
     const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    const submitted =
-      Boolean(state.reviews[`${test.id}:${email}`]) ||
-      state.submissions.some((s) => s.testId === test.id && s.uid === email && s.status !== 'FAILED')
-    if (!submitted) return notFound(route, 'We could not find a result for this test.')
-    return json(route, resultFor(test, email, state))
+    if (!test) return notFound(route, 'Test not found')
+    if (!submittedStatus(test.id, email)) return notFound(route, 'We could not find a result for this test')
+    const result = resultFor(test, email, state)
+    return json(route, {
+      data: {
+        testId: result.testId,
+        testTitle: result.testTitle,
+        state: result.state,
+        submittedAt: result.submittedAt,
+        answers: { language: result.language },
+        cases: result.cases,
+        passedCases: result.passedCases,
+        totalCases: result.totalCases,
+        marksReleased: result.marksReleased,
+        resultsReleasedAt: result.releasedAt,
+        marks: result.marks,
+        maxMarks: result.maxMarks,
+        comment: result.comment,
+      },
+    })
   })
 
-  // --- review detail (also serves a student's own latest submission at .../mine)
-  await page.route('**/api/tests/*/submissions/*', (route) => {
-    const email = requireAuth(route)
-    if (!email) return
-    const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    const last = lastSegment(route)
-
-    // A student reads their own submission the same way the single-owner
-    // contract works elsewhere: no body, no other student reachable.
-    if (last === 'mine') {
-      if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
-      const submission = submissionFor(test.id, email, state)
-      if (!submission) return route.fulfill({ status: 204, body: '' })
-      return json(route, submission)
-    }
-
-    if (!requireTeacher(route, email)) return
-    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
-    const member = reviewMemberOf(test, last, state)
-    if (!member) return notFound(route, 'That submission could not be found.')
-    return json(route, reviewDetailFor(test, member, state))
-  })
-
-  // Registered after the detail wildcard so release wins: newest-handler-first.
-  await page.route('**/api/tests/*/submissions/release', (route) => {
+  // /api/tests/:id/release (teacher; idempotent)
+  await page.route('**/api/tests/*/release', (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (!requireTeacher(route, email)) return
     if (route.request().method() !== 'POST') return methodNotAllowed(route, 'POST')
     const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    // Idempotent: releasing twice keeps the time the students first saw.
+    if (!test) return notFound(route, 'Test not found')
     if (!state.releasedAt.has(test.id)) state.releasedAt.set(test.id, new Date().toISOString())
-    return json(route, reviewListFor(test, state))
+    return json(route, { message: 'Results released', data: { testId: test.id, resultsReleasedAt: state.releasedAt.get(test.id) } })
   })
 
-  await page.route('**/api/tests/*/submissions/*/review', (route) => {
+  /* --------------------------------------------------------------- submissions */
+
+  // /api/submissions (submit): membership, window, then lock -- as the backend
+  await page.route('**/api/submissions', (route) => {
+    const email = requireAuth(route)
+    if (!email) return
+    if (route.request().method() !== 'POST') return methodNotAllowed(route, 'POST')
+    const body = (route.request().postDataJSON() ?? {}) as { testId?: string; answers?: { code?: string; language?: Language } }
+    const test = findTest(String(body.testId ?? ''), state)
+    if (!test) return notFound(route, 'Test not found')
+    if (!enrolled(test.classroomId, email)) return forbidden(route, "Forbidden: You are not a member of this test's classroom")
+    const now = Date.now()
+    if (now < Date.parse(test.windowStart)) return forbidden(route, 'Forbidden: Test has not started yet')
+    if (now > Date.parse(test.windowEnd)) return forbidden(route, 'Forbidden: Test has already ended')
+    if (submittedStatus(test.id, email)) return forbidden(route, 'Forbidden: Submission is locked and cannot be modified')
+    state.submissions.push({
+      id: `${test.id}_uid-${email}`,
+      testId: test.id,
+      uid: email,
+      language: body.answers?.language ?? test.language,
+      code: body.answers?.code ?? '',
+      status: 'QUEUED',
+      submittedAt: new Date().toISOString(),
+    })
+    return json(route, { message: 'Exam submitted successfully' })
+  })
+
+  await page.route('**/api/submissions/save', (route) => {
+    const email = requireAuth(route)
+    if (!email) return
+    const body = (route.request().postDataJSON() ?? {}) as { testId?: string }
+    if (submittedStatus(String(body.testId ?? ''), email)) {
+      return forbidden(route, 'Forbidden: Submission is locked and cannot be modified')
+    }
+    return json(route, { message: 'Answers saved successfully' })
+  })
+
+  // /api/submissions/test/:testId (teacher list)
+  await page.route('**/api/submissions/test/*', (route) => {
+    const email = requireAuth(route)
+    if (!email) return
+    if (!requireTeacher(route, email)) return
+    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
+    const test = findTest(lastSegment(route), state)
+    if (!test) return notFound(route, 'Test not found')
+    const list = reviewListFor(test, state)
+    return json(route, {
+      data: {
+        testId: list.testId,
+        testTitle: list.testTitle,
+        maxMarks: list.maxMarks,
+        resultsReleasedAt: list.releasedAt,
+        submissions: list.submissions.map((row) => ({
+          studentId: row.studentUid,
+          studentName: row.studentName,
+          studentEmail: row.studentEmail,
+          state: row.state,
+          submittedAt: row.submittedAt,
+          marks: row.marks,
+          maxMarks: row.maxMarks,
+          passedCases: row.passedCases,
+          totalCases: row.totalCases,
+          flags: flagCounts(test.id, row.studentEmail),
+        })),
+      },
+    })
+  })
+
+  const reviewBody = (test: Test, member: RosterEntry) => {
+    const detail = reviewDetailFor(test, member, state)
+    return {
+      testId: detail.testId,
+      testTitle: detail.testTitle,
+      studentId: detail.studentUid,
+      studentName: detail.studentName,
+      studentEmail: detail.studentEmail,
+      state: detail.state,
+      submittedAt: detail.submittedAt,
+      answers: detail.state === 'NOT_SUBMITTED' ? null : { language: detail.language, code: detail.code },
+      cases: detail.cases,
+      passedCases: detail.passedCases,
+      totalCases: detail.totalCases,
+      marks: detail.marks,
+      maxMarks: detail.maxMarks,
+      comment: detail.comment,
+      resultsReleasedAt: detail.releasedAt,
+      flags: flagCounts(test.id, member.email),
+    }
+  }
+
+  // /api/submissions/test/:testId/:studentId (teacher detail)
+  await page.route('**/api/submissions/test/*/*', (route) => {
+    const email = requireAuth(route)
+    if (!email) return
+    if (!requireTeacher(route, email)) return
+    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
+    const parts = segments(route)
+    const test = findTest(String(parts.at(-2)), state)
+    if (!test) return notFound(route, 'Test not found')
+    const member = memberByUid(test, String(parts.at(-1)))
+    if (!member) return notFound(route, 'Submission not found')
+    return json(route, { data: reviewBody(test, member) })
+  })
+
+  // /api/submissions/test/:testId/:studentId/review (save grade)
+  await page.route('**/api/submissions/test/*/*/review', (route) => {
     const email = requireAuth(route)
     if (!email) return
     if (!requireTeacher(route, email)) return
     if (route.request().method() !== 'PUT') return methodNotAllowed(route, 'PUT')
-    const test = findTest(testIdOf(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    // A release freezes the grades: a later save cannot contradict the students.
+    const parts = segments(route)
+    const test = findTest(String(parts.at(-3)), state)
+    if (!test) return notFound(route, 'Test not found')
     if (state.releasedAt.has(test.id)) {
-      return json(route, { message: 'Results are released, so gradings are locked.', code: 'CONFLICT' }, 409)
+      return json(route, { message: 'Results are released, so grades are locked', code: 'CONFLICT' }, 409)
     }
-    const member = reviewMemberOf(test, secondToLastSegment(route), state)
-    if (!member) return notFound(route, 'That submission could not be found.')
+    const member = memberByUid(test, String(parts.at(-2)))
+    if (!member) return notFound(route, 'Submission not found')
     const record = state.reviews[`${test.id}:${member.email}`]
-    if (!record) return json(route, { message: 'This student did not submit this test.', code: 'CONFLICT' }, 409)
-
+    if (!record) return json(route, { message: 'This student has not submitted this test', code: 'CONFLICT' }, 409)
     const body = (route.request().postDataJSON() ?? {}) as { marks?: unknown; comment?: unknown }
     let marks: number | null = null
     if (body.marks !== null && body.marks !== undefined) {
       const parsed = Number(body.marks)
       if (!Number.isInteger(parsed) || parsed < 0 || parsed > totalPointsOf(test)) {
-        return fail(route, `Enter a whole number of marks between 0 and ${totalPointsOf(test)}.`)
+        return fail(route, `Enter a whole number of marks between 0 and ${totalPointsOf(test)}`)
       }
       marks = parsed
     }
     record.marks = marks
     record.comment = String(body.comment ?? '')
-    return json(route, reviewDetailFor(test, member, state))
+    return json(route, { message: 'Review saved', data: reviewBody(test, member) })
   })
 
-  // --- generic: /api/tests/:id
-  await page.route('**/api/tests/*', (route) => {
+  /* ------------------------------------------------------------------- monitor */
+
+  await page.route('**/api/monitor/*/flags', (route) => {
     const email = requireAuth(route)
     if (!email) return
-    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
-    const test = findTest(lastSegment(route), state)
-    if (!test) return notFound(route, 'That test could not be found.')
-    return json(route, detailOf(test))
+    const test = findTest(secondToLastSegment(route), state)
+    if (!test) return notFound(route, 'Test not found')
+    if (route.request().method() === 'POST') {
+      const body = (route.request().postDataJSON() ?? {}) as { flagType?: string; metadata?: Record<string, unknown> }
+      if (!['TAB_SWITCH', 'DEVTOOLS_OPEN', 'PASTE_ATTEMPT', 'FULLSCREEN_EXIT'].includes(String(body.flagType))) {
+        return fail(route, 'That request is not valid.')
+      }
+      state.monitorEvents.push({ testId: test.id, uid: email, flagType: body.flagType, at: new Date().toISOString(), ...(body.metadata ?? {}) })
+      return json(route, { message: 'Flag recorded' }, 201)
+    }
+    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET, POST')
+    if (!requireTeacher(route, email)) return
+    const byStudent = new Map<string, Record<string, unknown>[]>()
+    for (const event of state.monitorEvents) {
+      if (event.testId !== test.id) continue
+      const list = byStudent.get(String(event.uid)) ?? []
+      list.push(event)
+      byStudent.set(String(event.uid), list)
+    }
+    const students = [...byStudent.entries()].map(([studentEmail, events]) => {
+      const member = state.roster.find((m) => m.classroomId === test.classroomId && m.email === studentEmail)
+      const counts: Record<string, number> = {}
+      for (const event of events) counts[String(event.flagType)] = (counts[String(event.flagType)] ?? 0) + 1
+      return {
+        studentId: member?.uid ?? `uid-${studentEmail}`,
+        studentName: member?.displayName || studentEmail,
+        studentEmail,
+        total: events.length,
+        counts,
+        flags: events.map(({ testId: _t, uid: _u, flagType, at, ...metadata }) => ({ flagType, at: at ?? null, metadata })),
+      }
+    })
+    students.sort((a, b) => b.total - a.total)
+    return json(route, { data: { testId: test.id, students } })
   })
 
-  // --- collection
-  await page.route('**/api/tests', (route) => {
+  /* -------------------------------------------------------------- plagiarism */
+
+  // A stand-in for the AST engine: same response shape, with a crude
+  // similarity (shared tokens) so the page has realistic data.
+  const plagiarism = new Map<string, Record<string, unknown>>()
+  const tokens = (code: string) => code.split(/[^A-Za-z0-9_]+/).filter(Boolean)
+  const jaccard = (a: string[], b: string[]) => {
+    const x = new Set(a)
+    const y = new Set(b)
+    const shared = [...x].filter((t) => y.has(t)).length
+    const union = new Set([...x, ...y]).size
+    return union === 0 ? 0 : shared / union
+  }
+
+  await page.route('**/api/plagiarism/*/check', (route) => {
     const email = requireAuth(route)
     if (!email) return
-    if (route.request().method() !== 'GET') return methodNotAllowed(route, 'GET')
-    const enrolled = new Set(state.roster.filter((r) => r.email === email).map((r) => r.classroomId))
-    const visible = ROLES[email] ? state.tests : state.tests.filter((t) => enrolled.has(t.classroomId))
-    return json(route, visible.map((t) => summaryOf(t, state, email)))
+    if (!requireTeacher(route, email)) return
+    if (route.request().method() !== 'POST') return methodNotAllowed(route, 'POST')
+    const test = findTest(secondToLastSegment(route), state)
+    if (!test) return notFound(route, 'Test not found')
+    const submitted = state.roster
+      .filter((m) => m.classroomId === test.classroomId)
+      .map((m) => ({ member: m, record: state.reviews[`${test.id}:${m.email}`] }))
+      .filter((entry) => entry.record)
+    const pairs: Record<string, unknown>[] = []
+    for (let i = 0; i < submitted.length; i++) {
+      for (let j = i + 1; j < submitted.length; j++) {
+        const a = submitted[i]
+        const b = submitted[j]
+        const score = jaccard(tokens(a.record!.code), tokens(b.record!.code))
+        pairs.push({
+          submissionA: `${test.id}_${a.member.uid}`,
+          submissionB: `${test.id}_${b.member.uid}`,
+          studentA: { id: a.member.uid, name: a.member.displayName, email: a.member.email },
+          studentB: { id: b.member.uid, name: b.member.displayName, email: b.member.email },
+          metrics: {
+            cosine_similarity: score,
+            ted_score: Math.max(0, score - 0.05),
+            identifier_overlap: score,
+            operator_overlap: Math.min(1, score + 0.1),
+            combined_score: score,
+          },
+          flagLevel: score >= 0.8 ? 'high' : score >= 0.7 ? 'medium' : score >= 0.5 ? 'low' : 'none',
+        })
+      }
+    }
+    const flagged = pairs.filter((p) => p.flagLevel !== 'none')
+    plagiarism.set(test.id, {
+      status: 'COMPLETED',
+      pairs,
+      flagged,
+      summary: { totalSubmissions: submitted.length, totalPairs: pairs.length, flaggedPairs: flagged.length, processingTimeMs: 42 },
+      skipped: {},
+      updatedAt: new Date().toISOString(),
+    })
+    return json(route, { message: 'Plagiarism check queued' }, 202)
   })
+
+  await page.route('**/api/plagiarism/*/status', (route) => {
+    const email = requireAuth(route)
+    if (!email) return
+    if (!requireTeacher(route, email)) return
+    const result = plagiarism.get(secondToLastSegment(route))
+    if (!result) return json(route, { error: 'Plagiarism result not found' }, 404)
+    return json(route, result)
+  })
+
+  /* ------------------------------------------------------------------ judge0 */
+
+  // Code execution answers 503 until a Judge0 server is configured, as the backend does.
+  await page.route('**/api/judge0/run', (route) =>
+    json(route, { message: 'Code execution is not configured on this server yet' }, 503),
+  )
 
   return state
 }

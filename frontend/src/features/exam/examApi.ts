@@ -28,6 +28,24 @@ import {
  * here, so the pages keep consuming the shared types unchanged.
  */
 
+/** One run of the student's code, as `POST /api/judge0/run` reports it. */
+export interface RunCaseResult {
+  /** A visible test case id, or "custom" for the student's own input. */
+  caseId: string
+  input: string
+  /** `null` for a custom run (nothing to compare against). */
+  expected: string | null
+  stdout: string
+  stderr: string
+  compileOutput: string
+  /** Judge0's verdict, e.g. "Accepted", "Wrong Answer", "Time Limit Exceeded". */
+  status: string
+  /** Visible cases only: output matched the expected output. */
+  passed: boolean | null
+  timeMs: number | null
+  memoryKb: number | null
+}
+
 export interface SubmitInput {
   code: string
   language: ExamLanguage
@@ -274,6 +292,28 @@ export const examApi = {
       body: { testId, answers: { language: input.language, code: sanitizeCode(input.code, 200_000) } },
       retryOnUnauthorized: false,
     })
+  },
+
+  /**
+   * Runs the student's code on the question's VISIBLE test cases (plus an
+   * optional custom input) via `POST /api/judge0/run`. Nothing is saved.
+   * Rejects with status 503 while Judge0 is not configured on the server.
+   */
+  run: async (
+    testId: string,
+    input: { questionId: string; code: string; language: ExamLanguage; customInput?: string },
+  ): Promise<RunCaseResult[]> => {
+    const payload = await http.post<{ data: { results: RunCaseResult[] } }>('/api/judge0/run', {
+      body: {
+        testId,
+        questionId: input.questionId,
+        code: sanitizeCode(input.code, 50_000),
+        language: input.language,
+        ...(input.customInput !== undefined ? { customInput: input.customInput } : {}),
+      },
+      retryOnUnauthorized: false,
+    })
+    return unwrap(payload).results ?? []
   },
 
   /** This student's own submission for a test, or null. */

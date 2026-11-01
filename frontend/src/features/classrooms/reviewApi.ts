@@ -216,6 +216,143 @@ export const reviewApi = {
   },
 }
 
+/* ------------------------------------------------------------- integrity */
+
+export type FlagType = 'TAB_SWITCH' | 'DEVTOOLS_OPEN' | 'PASTE_ATTEMPT' | 'FULLSCREEN_EXIT'
+
+export const FLAG_LABELS: Readonly<Record<FlagType, string>> = {
+  TAB_SWITCH: 'Left the exam tab',
+  DEVTOOLS_OPEN: 'Opened developer tools',
+  PASTE_ATTEMPT: 'Tried to paste',
+  FULLSCREEN_EXIT: 'Exited fullscreen',
+}
+
+export interface StudentIntegrity {
+  studentId: string
+  studentName: string
+  studentEmail: string
+  total: number
+  counts: FlagCounts
+  flags: { flagType: FlagType; at: string | null }[]
+}
+
+export interface IntegrityReport {
+  testId: string
+  /** Students with at least one flag, most-flagged first. Advisory only. */
+  students: StudentIntegrity[]
+}
+
+/* ------------------------------------------------------------ plagiarism */
+
+export type PlagiarismStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
+export type FlagLevel = 'high' | 'medium' | 'low' | 'none'
+
+export interface PlagiarismPair {
+  submissionA: string
+  submissionB: string
+  studentA: { id: string; name: string; email: string }
+  studentB: { id: string; name: string; email: string }
+  metrics: {
+    cosine_similarity: number
+    ted_score: number
+    identifier_overlap: number
+    operator_overlap: number
+    combined_score: number
+  }
+  flagLevel: FlagLevel
+}
+
+export interface PlagiarismResult {
+  /** `null` when no check has been run for this test yet. */
+  status: PlagiarismStatus | null
+  pairs: PlagiarismPair[]
+  flagged: PlagiarismPair[]
+  summary: { totalSubmissions: number; totalPairs: number; flaggedPairs: number; processingTimeMs: number } | null
+  /** Submissions left out, keyed by submission id, with the reason (e.g. not Python). */
+  skipped: Record<string, string>
+  /** e.g. "Not enough valid submissions to check (minimum 2 required)". */
+  message: string | null
+  error: string | null
+  updatedAt: string | null
+}
+
+const studentFromSubmission = (testId: string, submissionId: string) =>
+  submissionId.startsWith(`${testId}_`) ? submissionId.slice(testId.length + 1) : submissionId
+
+function toPair(testId: string, raw: any): PlagiarismPair {
+  const person = (value: any, submissionId: string) => ({
+    id: String(value?.id ?? studentFromSubmission(testId, submissionId)),
+    name: String(value?.name ?? studentFromSubmission(testId, submissionId)),
+    email: String(value?.email ?? ''),
+  })
+  return {
+    submissionA: String(raw.submissionA),
+    submissionB: String(raw.submissionB),
+    studentA: person(raw.studentA, String(raw.submissionA)),
+    studentB: person(raw.studentB, String(raw.submissionB)),
+    metrics: raw.metrics,
+    flagLevel: raw.flagLevel ?? 'none',
+  }
+}
+
+export const integrityApi = {
+  /**
+   * The test's integrity report (`GET /api/monitor/:testId/flags`): every
+   * advisory flag, grouped per student. Teacher-owner only.
+   */
+  getReport: async (testId: string, signal?: AbortSignal): Promise<IntegrityReport> => {
+    const payload = await http.get<{ data: any }>(
+      `/api/monitor/${encodeURIComponent(testId)}/flags`,
+      signal ? { signal } : {},
+    )
+    const raw = unwrap(payload)
+    return {
+      testId: String(raw.testId ?? testId),
+      students: (Array.isArray(raw.students) ? raw.students : []).map((student: any) => ({
+        studentId: String(student.studentId),
+        studentName: String(student.studentName ?? student.studentEmail ?? student.studentId),
+        studentEmail: String(student.studentEmail ?? ''),
+        total: Number(student.total) || 0,
+        counts: student.counts ?? {},
+        flags: (Array.isArray(student.flags) ? student.flags : []).map((flag: any) => ({
+          flagType: flag.flagType,
+          at: flag.at ? toIso(flag.at) : null,
+        })),
+      })),
+    }
+  },
+}
+
+export const plagiarismApi = {
+  /** Queues an AST similarity check over every submitted answer (`202`). */
+  check: async (testId: string): Promise<void> => {
+    await http.post(`/api/plagiarism/${encodeURIComponent(testId)}/check`)
+  },
+
+  /** The latest check's status and results; `status: null` when none has run. */
+  getResult: async (testId: string, signal?: AbortSignal): Promise<PlagiarismResult> => {
+    try {
+      const raw = await http.get<any>(`/api/plagiarism/${encodeURIComponent(testId)}/status`, signal ? { signal } : {})
+      return {
+        status: raw?.status ?? null,
+        pairs: (Array.isArray(raw?.pairs) ? raw.pairs : []).map((pair: any) => toPair(testId, pair)),
+        flagged: (Array.isArray(raw?.flagged) ? raw.flagged : []).map((pair: any) => toPair(testId, pair)),
+        summary: raw?.summary ?? null,
+        skipped: raw?.skipped ?? {},
+        message: raw?.message ?? null,
+        error: raw?.error ?? null,
+        updatedAt: raw?.updatedAt ? toIso(raw.updatedAt) : null,
+      }
+    } catch (error) {
+      // 404 means "never checked", which the page shows as an empty state.
+      if ((error as { status?: number })?.status === 404) {
+        return { status: null, pairs: [], flagged: [], summary: null, skipped: {}, message: null, error: null, updatedAt: null }
+      }
+      throw error
+    }
+  },
+}
+
 /** Client-side search over an already-fetched list, across name and email. */
 export function filterSubmissionsByStudent(
   submissions: SubmissionSummary[],

@@ -12,6 +12,7 @@ import {
   testStatus,
 } from '@/features/exam/testWindow'
 import { CodeEditor } from '@/features/exam/CodeEditor'
+import { OutputPanel } from '@/features/exam/OutputPanel'
 import { FullscreenGuard } from '@/features/exam/FullscreenGuard'
 import { ExamOverlay, type ViolationKind } from '@/features/exam/ExamOverlay'
 import { SubmitBar } from '@/features/exam/SubmitBar'
@@ -499,6 +500,16 @@ export function ExamPage() {
                   }}
                 />
               </div>
+
+              {/* Run on the sample test cases; collapsible so the editor keeps its room. */}
+              <OutputPanel
+                testId={testId}
+                questionId={currentQuestion?.id ?? `q${activeQuestion + 1}`}
+                code={code}
+                language={test.language}
+                disabled={expired || submitted}
+                className="shrink-0"
+              />
 
               {/*
                 The action bar: Previous / Next on the left, Submit on the right.
