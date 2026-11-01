@@ -4,7 +4,8 @@ import { db } from '../../db/firestore';
 export const createCollegeService = async (
   requesterCollegeId: string | null | undefined,
   name: string,
-  code: string
+  code: string,
+  emailDomain: string | null = null
 ) => {
   // Only root admins (collegeId is null/undefined) can create colleges
   if (requesterCollegeId) {
@@ -13,8 +14,10 @@ export const createCollegeService = async (
     throw error;
   }
 
-  const docRef = await db.collection(COLLECTIONS.COLLEGES).add({ name, code });
-  return { id: docRef.id, name, code };
+  // `emailDomain` (e.g. "mit.ac.in") lets students register without knowing
+  // the college id: registration matches it against their email.
+  const docRef = await db.collection(COLLECTIONS.COLLEGES).add({ name, code, emailDomain });
+  return { id: docRef.id, name, code, emailDomain };
 };
 
 export const getCollegesService = async (requesterCollegeId: string | null | undefined) => {

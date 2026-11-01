@@ -10,7 +10,10 @@ export const registerSchema = z.object({
   role: z.string().refine((r) => r === Role.STUDENT, {
     message: "Only STUDENT accounts can self-register; TEACHER and ADMIN accounts are assigned by an admin"
   }),
-  collegeId: z.string().min(1, "collegeId is required")
+  // Optional: when omitted, the college is found from the email's domain
+  // (colleges carry an `emailDomain`). Registration still fails if neither works.
+  collegeId: z.string().min(1).optional(),
+  displayName: z.string().trim().max(80, "Name is too long").optional(),
 });
 
 export const loginSchema = z.object({
