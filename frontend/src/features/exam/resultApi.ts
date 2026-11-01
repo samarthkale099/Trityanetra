@@ -1,5 +1,6 @@
 import { http } from '@/shared/lib/httpClient'
-import type { ExamLanguage } from '@/shared/types/classroom'
+import { isExamLanguage, type ExamLanguage } from '@/shared/types/classroom'
+import { toIso, unwrap } from '@/features/exam/examApi'
 
 /**
  * A student's own result for one test.
@@ -55,14 +56,39 @@ export interface StudentResult {
   comment: string
 }
 
+/** The backend's `{ data }` result payload as a `StudentResult`. */
+function toResult(raw: any): StudentResult {
+  const language = isExamLanguage(raw?.answers?.language) ? raw.answers.language : 'python'
+  const cases: ResultCase[] = Array.isArray(raw.cases) ? raw.cases : []
+  return {
+    testId: String(raw.testId),
+    testTitle: String(raw.testTitle ?? ''),
+    language,
+    state: raw.state === 'LATE' ? 'LATE' : 'SUBMITTED',
+    submittedAt: toIso(raw.submittedAt),
+    passedCases: Number(raw.passedCases) || cases.filter((c) => c.state === 'PASS').length,
+    totalCases: Number(raw.totalCases) || cases.length,
+    cases,
+    marksReleased: Boolean(raw.marksReleased),
+    releasedAt: raw.resultsReleasedAt ? toIso(raw.resultsReleasedAt) : null,
+    marks: raw.marksReleased && typeof raw.marks === 'number' ? raw.marks : null,
+    maxMarks: Number(raw.maxMarks) || 0,
+    comment: raw.marksReleased ? String(raw.comment ?? '') : '',
+  }
+}
+
 export const resultApi = {
   /**
-   * The signed-in student's own result for a test. Rejects with a 404-status
-   * `ApiError` when the caller did not submit the test, or the test is unknown.
+   * The signed-in student's own result for a test (`GET /api/tests/:id/result`).
+   * Rejects with a 404-status `ApiError` when the caller did not submit the
+   * test, or the test is unknown. Marks and the comment stay withheld by the
+   * server until the teacher releases results.
    */
-  getResult: (testId: string, signal?: AbortSignal): Promise<StudentResult> =>
-    http.get<StudentResult>(
+  getResult: async (testId: string, signal?: AbortSignal): Promise<StudentResult> => {
+    const payload = await http.get<{ data: any }>(
       `/api/tests/${encodeURIComponent(testId)}/result`,
       signal ? { signal } : {},
-    ),
+    )
+    return toResult(unwrap(payload))
+  },
 }

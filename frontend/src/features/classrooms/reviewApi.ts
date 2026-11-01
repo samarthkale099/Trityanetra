@@ -1,38 +1,31 @@
 import { http } from '@/shared/lib/httpClient'
 import { sanitizeSearchTerm, sanitizeText } from '@/shared/lib/sanitize'
-import type { ExamLanguage } from '@/shared/types/classroom'
+import { isExamLanguage, type ExamLanguage } from '@/shared/types/classroom'
+import { toIso, unwrap } from '@/features/exam/examApi'
 
 /**
  * Review HTTP surface: a teacher reading and grading one test's submissions.
  *
- * NOTE: like `classroomApi` and `examApi`, the backend does not implement these
- * routes yet (`docs/frontend-report.md` §8). The shapes below are the contract
- * this frontend is written against; MSW implements exactly them
- * (`src/tests/msw/classroomHandlers.ts`). If the backend is implemented
- * differently, change the paths and body keys here and nothing else.
+ * Backend routes (teacher-owner or admin only; ownership checked server-side):
+ * - `GET  /api/submissions/test/:testId`                    -> roster with state, marks, flags
+ * - `GET  /api/submissions/test/:testId/:studentId`         -> one student's answers
+ * - `PUT  /api/submissions/test/:testId/:studentId/review`  -> save marks + comment
+ * - `POST /api/tests/:testId/release`                       -> release results (idempotent)
  *
- * Routes:
- * - `GET  /api/tests/:testId/submissions`                       -> `SubmissionsList`
- * - `GET  /api/tests/:testId/submissions/:submissionId`        -> `SubmissionReviewDetail`
- * - `PUT  /api/tests/:testId/submissions/:submissionId/review` -> `SubmissionReviewDetail`
- * - `POST /api/tests/:testId/submissions/release`              -> `SubmissionsList`
+ * A "submission id" in this UI is the student's uid: the backend stores one
+ * submission per test+student, so the student identifies it uniquely.
  *
- * Rules the frontend relies on and the backend must enforce:
- * - Every route is teacher/admin only. A student's request is refused rather
- *   than silently scoped down, so a wrong-role screen fails loudly.
- * - A submission id encodes the student: `sub-{testId}-{studentUid}` once one
- *   exists, `pending-{testId}-{studentUid}` while the student has not submitted.
- *   The server derives the student from the classroom roster, never from a body.
- * - Marks and a comment may be saved repeatedly and stay hidden from students
- *   until `release`. After release a save is a `409 CONFLICT`, and the values are
- *   frozen.
- * - A hidden test case's `input`, `expected`, and `actual` are never sent: only
- *   its PASS/FAIL `state`, so a teacher can grade without the case leaking.
- * - A test in another college is reported as missing (404), not refused (403),
- *   so its existence is not confirmed.
+ * Marks and a comment may be saved repeatedly and stay hidden from students
+ * until release. After release a save is a `409`, and the values are frozen.
+ *
+ * Per-case PASS/FAIL arrives from automatic judging (Judge0). Until a
+ * submission has been judged, `cases` is empty and the counts are 0.
  */
 
 export type SubmissionState = 'SUBMITTED' | 'LATE' | 'NOT_SUBMITTED'
+
+/** Monitor flag counts for one student, e.g. `{ TAB_SWITCH: 2, PASTE_ATTEMPT: 1 }`. Advisory only. */
+export type FlagCounts = Partial<Record<'TAB_SWITCH' | 'DEVTOOLS_OPEN' | 'PASTE_ATTEMPT' | 'FULLSCREEN_EXIT', number>>
 
 /** One row of the review list. Carries no code and no case detail. */
 export interface SubmissionSummary {
@@ -48,6 +41,8 @@ export interface SubmissionSummary {
   /** Saved by the teacher, hidden from the student until release. */
   marks: number | null
   maxMarks: number
+  /** Integrity flags raised during the exam. */
+  flags?: FlagCounts
 }
 
 export interface SubmissionsList {
@@ -96,6 +91,8 @@ export interface SubmissionReviewDetail {
   comment: string
   resultsReleased: boolean
   releasedAt: string | null
+  /** Integrity flags raised during the exam. */
+  flags?: FlagCounts
 }
 
 export interface SaveReviewInput {
@@ -104,39 +101,119 @@ export interface SaveReviewInput {
   comment: string
 }
 
-const path = (testId: string) => `/api/tests/${encodeURIComponent(testId)}/submissions`
+/* ------------------------------------------------------------------ mapping */
+
+const stateOf = (value: unknown): SubmissionState =>
+  value === 'SUBMITTED' || value === 'LATE' ? value : 'NOT_SUBMITTED'
+
+function toSummary(raw: any): SubmissionSummary {
+  return {
+    id: String(raw.studentId),
+    studentUid: String(raw.studentId),
+    studentName: String(raw.studentName ?? raw.studentEmail ?? ''),
+    studentEmail: String(raw.studentEmail ?? ''),
+    state: stateOf(raw.state),
+    passedCases: Number(raw.passedCases) || 0,
+    totalCases: Number(raw.totalCases) || 0,
+    submittedAt: raw.submittedAt ? toIso(raw.submittedAt) : null,
+    marks: typeof raw.marks === 'number' ? raw.marks : null,
+    maxMarks: Number(raw.maxMarks) || 0,
+    flags: raw.flags ?? {},
+  }
+}
+
+function toList(raw: any): SubmissionsList {
+  return {
+    testId: String(raw.testId),
+    testTitle: String(raw.testTitle ?? ''),
+    maxMarks: Number(raw.maxMarks) || 0,
+    resultsReleased: Boolean(raw.resultsReleasedAt),
+    releasedAt: raw.resultsReleasedAt ? toIso(raw.resultsReleasedAt) : null,
+    submissions: (Array.isArray(raw.submissions) ? raw.submissions : []).map(toSummary),
+  }
+}
+
+/** The program text of a submission, whichever answer shape it was saved in. */
+export function codeFromAnswers(answers: any): { code: string; language: ExamLanguage } {
+  const language = isExamLanguage(answers?.language) ? answers.language : 'python'
+  if (typeof answers?.code === 'string') return { code: answers.code, language }
+  const questions = answers?.questions
+  if (questions && typeof questions === 'object') {
+    const parts = Object.keys(questions)
+      .sort()
+      .map((key) => `# ${key}\n${String(questions[key]?.code ?? '')}`)
+    return { code: parts.join('\n\n'), language }
+  }
+  return { code: '', language }
+}
+
+function toDetail(raw: any): SubmissionReviewDetail {
+  const { code, language } = codeFromAnswers(raw.answers)
+  return {
+    id: String(raw.studentId),
+    testId: String(raw.testId),
+    testTitle: String(raw.testTitle ?? ''),
+    studentUid: String(raw.studentId),
+    studentName: String(raw.studentName ?? raw.studentEmail ?? ''),
+    studentEmail: String(raw.studentEmail ?? ''),
+    state: stateOf(raw.state),
+    language,
+    code,
+    submittedAt: raw.submittedAt ? toIso(raw.submittedAt) : null,
+    cases: Array.isArray(raw.cases) ? raw.cases : [],
+    passedCases: Number(raw.passedCases) || 0,
+    totalCases: Number(raw.totalCases) || 0,
+    marks: typeof raw.marks === 'number' ? raw.marks : null,
+    maxMarks: Number(raw.maxMarks) || 0,
+    comment: String(raw.comment ?? ''),
+    resultsReleased: Boolean(raw.resultsReleasedAt),
+    releasedAt: raw.resultsReleasedAt ? toIso(raw.resultsReleasedAt) : null,
+    flags: raw.flags ?? {},
+  }
+}
+
+const listPath = (testId: string) => `/api/submissions/test/${encodeURIComponent(testId)}`
+const studentPath = (testId: string, studentId: string) =>
+  `${listPath(testId)}/${encodeURIComponent(studentId)}`
+
+/* ---------------------------------------------------------------------- api */
 
 export const reviewApi = {
   /** The class list for one test, in roster order. Teacher/admin only. */
-  listSubmissions: (testId: string, signal?: AbortSignal): Promise<SubmissionsList> =>
-    http.get<SubmissionsList>(path(testId), signal ? { signal } : {}),
+  listSubmissions: async (testId: string, signal?: AbortSignal): Promise<SubmissionsList> => {
+    const payload = await http.get<{ data: any }>(listPath(testId), signal ? { signal } : {})
+    return toList(unwrap(payload))
+  },
 
-  getSubmission: (
+  getSubmission: async (
     testId: string,
     submissionId: string,
     signal?: AbortSignal,
-  ): Promise<SubmissionReviewDetail> =>
-    http.get<SubmissionReviewDetail>(
-      `${path(testId)}/${encodeURIComponent(submissionId)}`,
-      signal ? { signal } : {},
-    ),
+  ): Promise<SubmissionReviewDetail> => {
+    const payload = await http.get<{ data: any }>(studentPath(testId, submissionId), signal ? { signal } : {})
+    return toDetail(unwrap(payload))
+  },
 
   /**
    * Saves marks and a comment for one submission. Repeatable until the results
    * are released; the server rejects a later save with a `409`.
    */
-  saveReview: (
+  saveReview: async (
     testId: string,
     submissionId: string,
     input: SaveReviewInput,
-  ): Promise<SubmissionReviewDetail> =>
-    http.put<SubmissionReviewDetail>(`${path(testId)}/${encodeURIComponent(submissionId)}/review`, {
+  ): Promise<SubmissionReviewDetail> => {
+    const payload = await http.put<{ data: any }>(`${studentPath(testId, submissionId)}/review`, {
       body: { marks: input.marks, comment: sanitizeText(input.comment, 2000) },
-    }),
+    })
+    return toDetail(unwrap(payload))
+  },
 
   /** Releases every saved mark for the test, making results visible to students. */
-  releaseResults: (testId: string): Promise<SubmissionsList> =>
-    http.post<SubmissionsList>(`${path(testId)}/release`),
+  releaseResults: async (testId: string): Promise<SubmissionsList> => {
+    await http.post(`/api/tests/${encodeURIComponent(testId)}/release`)
+    return reviewApi.listSubmissions(testId)
+  },
 }
 
 /** Client-side search over an already-fetched list, across name and email. */

@@ -102,15 +102,68 @@ export function clearMonitorQueue(): void {
   writeQueue([])
 }
 
-function isEndpointMissing(error: unknown): boolean {
-  const status = (error as { status?: number } | null)?.status
-  // 404/405: the route is not mounted. 501: explicitly not implemented.
-  return status === 404 || status === 405 || status === 501
+/* --------------------------------------------------------------- backend */
+
+/**
+ * The backend records four advisory flag types
+ * (`POST /api/monitor/:testId/flags { flagType, metadata }`). Client events map
+ * onto them; events with no backend counterpart stay client-side only.
+ */
+export type BackendFlagType = 'TAB_SWITCH' | 'DEVTOOLS_OPEN' | 'PASTE_ATTEMPT' | 'FULLSCREEN_EXIT'
+
+export function toBackendFlag(type: MonitorEventType): BackendFlagType | null {
+  switch (type) {
+    case 'TAB_HIDDEN':
+    case 'WINDOW_BLUR':
+      return 'TAB_SWITCH'
+    case 'DEVTOOLS_OPEN':
+      return 'DEVTOOLS_OPEN'
+    case 'PASTE_ATTEMPT':
+      return 'PASTE_ATTEMPT'
+    case 'FULLSCREEN_EXIT':
+      return 'FULLSCREEN_EXIT'
+    default:
+      // COPY_ATTEMPT and EXAM_SUBMITTED have no backend flag.
+      return null
+  }
+}
+
+/**
+ * The backend allows one flag per 2 s per student+test (429 above that).
+ * Sends are serialised through one chain and spaced 2.1 s apart, so a burst
+ * (blur + tab hide + fullscreen exit, all at once) is delivered in full
+ * rather than losing all but the first to the limiter.
+ */
+const SEND_SPACING_MS = 2_100
+let sendChain: Promise<unknown> = Promise.resolve()
+let lastSentAt = 0
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function sendFlag(context: MonitorContext, event: MonitorEvent): Promise<void> {
+  const flagType = toBackendFlag(event.type)
+  if (!flagType) return Promise.resolve()
+  const run = sendChain.then(async () => {
+    const gap = lastSentAt + SEND_SPACING_MS - Date.now()
+    if (gap > 0) await wait(gap)
+    lastSentAt = Date.now()
+    await http.post<void>(`/api/monitor/${encodeURIComponent(context.testId)}/flags`, {
+      body: {
+        flagType,
+        metadata: { ...(event.meta ?? {}), clientEvent: event.type, at: event.at, language: event.language ?? null },
+      },
+      // The server answering 401 must not sign the student out mid-exam.
+      retryOnUnauthorized: false,
+    })
+  })
+  // Keep the chain alive whatever this send does.
+  sendChain = run.catch(() => undefined)
+  return run
 }
 
 export interface ReportResult {
   delivered: boolean
-  /** True when the endpoint is absent and the event was queued locally. */
+  /** True when the send failed and the event was kept locally for a retry. */
   queued: boolean
 }
 
@@ -129,41 +182,38 @@ export async function reportMonitorEvent(
     language: context.language,
     meta: capMeta(meta),
   }
+  if (!toBackendFlag(type)) return { delivered: false, queued: false }
 
   try {
-    await http.post<void>(`/api/tests/${encodeURIComponent(context.testId)}/monitor-events`, {
-      body: { event },
-      // The server answering 401 must not sign the student out mid-exam.
-      retryOnUnauthorized: false,
-    })
-    await flushMonitorQueue(context)
+    await sendFlag(context, event)
+    void flushMonitorQueue(context)
     return { delivered: true, queued: false }
-  } catch (error) {
-    if (!isEndpointMissing(error)) {
-      // A transient failure: queue it, but do not surface anything to the user.
-      enqueueMonitorEvent(event)
-      return { delivered: false, queued: true }
-    }
+  } catch {
+    // Offline, rate-limited or a transient failure: keep it for a later retry,
+    // without surfacing anything to the student.
     enqueueMonitorEvent(event)
     return { delivered: false, queued: true }
   }
 }
 
 /**
- * Retries queued events. Called after a successful send, and on exam exit, so a
- * backend that gains the endpoint later drains the backlog without a deploy.
+ * Retries queued events, one at a time and spaced for the rate limit. Called
+ * after a successful send and on exam exit. Events that still fail stay queued.
  */
 export async function flushMonitorQueue(context: MonitorContext): Promise<number> {
   const pending = readQueue()
   if (pending.length === 0) return 0
-  try {
-    await http.post<void>(`/api/tests/${encodeURIComponent(context.testId)}/monitor-events`, {
-      body: { events: pending },
-      retryOnUnauthorized: false,
-    })
-    writeQueue([])
-    return pending.length
-  } catch {
-    return 0
+  writeQueue([])
+  let delivered = 0
+  const failed: MonitorEvent[] = []
+  for (const event of pending) {
+    try {
+      await sendFlag(context, event)
+      delivered++
+    } catch {
+      failed.push(event)
+    }
   }
+  if (failed.length) writeQueue([...failed, ...readQueue()])
+  return delivered
 }
