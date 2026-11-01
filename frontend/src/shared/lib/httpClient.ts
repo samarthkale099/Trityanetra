@@ -121,7 +121,14 @@ async function readErrorBody(response: Response): Promise<ApiErrorBody | undefin
   const contentType = response.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) return undefined
   try {
-    return (await response.json()) as ApiErrorBody
+    const body = (await response.json()) as ApiErrorBody & { error?: unknown }
+    // The backend's route guards answer `{ error: "..." }` while its central
+    // error handler answers `{ message, code }`: accept both, so the server's
+    // own explanation reaches the user either way.
+    if (body && typeof body.message !== 'string' && typeof body.error === 'string') {
+      return { ...body, message: body.error }
+    }
+    return body
   } catch {
     return undefined
   }

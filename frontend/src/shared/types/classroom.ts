@@ -127,6 +127,11 @@ export interface TestDetail {
   durationMinutes: number
   questions: Question[]
   totalPoints: number
+  /**
+   * Number of questions. The lobby carries this without the questions
+   * themselves -- they are only sent once the attempt starts.
+   */
+  questionCount?: number
 }
 
 /** The classroom detail response: a classroom plus its roster and test list. */

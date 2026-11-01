@@ -371,7 +371,7 @@ export function TestLobbyPage() {
               <div className="flex justify-between gap-4 border-b border-line pb-2">
                 <dt className="text-ink">Questions</dt>
                 <dd className="font-medium text-ink-strong">
-                  {lobby.test.questions.length} ({lobby.test.totalPoints} points)
+                  {lobby.test.questions.length || lobby.test.questionCount || 0} ({lobby.test.totalPoints} points)
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
@@ -389,7 +389,14 @@ export function TestLobbyPage() {
               </div>
             ) : null}
 
-            <ol className="mt-4 flex flex-col gap-3 border-t border-line pt-4">
+            {lobby.test.questions.length === 0 ? (
+              // The server sends the questions only once the attempt starts, so
+              // nobody can read them in advance from the lobby.
+              <p className="mt-4 border-t border-line pt-4 text-sm text-ink-faint">
+                The questions appear when you start the exam.
+              </p>
+            ) : null}
+            <ol className="mt-4 flex flex-col gap-3 border-t border-line pt-4 empty:hidden">
               {lobby.test.questions.map((question, index) => (
                 <li key={question.id}>
                   <p className="text-sm font-semibold text-ink-strong">

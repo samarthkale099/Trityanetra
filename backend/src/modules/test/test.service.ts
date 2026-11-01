@@ -327,7 +327,12 @@ export const enterTestService = async (testId: string, user: UserIdentity) => {
   const submission = await db.collection(COLLECTIONS.SUBMISSIONS).doc(`${testId}_${user.uid}`).get();
   const submissionData = submission.exists ? submission.data() : null;
 
-  const test = sanitizeTestForStudent(testId, testData);
+  const classroom = await db.collection(COLLECTIONS.CLASSROOMS).doc(testData.classroomId).get();
+  const test = {
+    ...sanitizeTestForStudent(testId, testData),
+    classroomName: classroom.exists ? classroom.data()?.name ?? '' : '',
+    totalPoints: maxMarksOf(testData),
+  };
   return {
     // The test's fields stay at the top level too, as the original entry
     // response returned them; `test` carries the same object for new clients.
