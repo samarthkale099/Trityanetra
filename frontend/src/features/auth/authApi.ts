@@ -94,13 +94,21 @@ export function profileFor(user: AuthUser): UserProfile {
  * from the users document, never from the client.
  */
 async function openSession(idToken: string): Promise<UserProfile> {
-  const payload = await http.get<{ user: Partial<UserProfile> & { uid: string; email: string } }>('/api/auth/me', {
+  const payload = await http.get<ProfilePayload>('/api/auth/me', {
     token: idToken,
     // A 401 here means the token was rejected, not that it merely expired.
     // Retrying would only re-send a credential the server refused.
     retryOnUnauthorized: false,
   })
-  const user = payload.user
+  return readProfile(payload)
+}
+
+type RawProfile = Partial<UserProfile> & { uid: string; email: string }
+type ProfilePayload = { user: RawProfile } | RawProfile
+
+/** `GET /api/auth/me` answers `{ user }`; a bare profile is accepted too. */
+function readProfile(payload: ProfilePayload): UserProfile {
+  const user: RawProfile = 'user' in payload && payload.user ? payload.user : (payload as RawProfile)
   return {
     uid: user.uid,
     email: user.email,
@@ -221,13 +229,13 @@ export const authApi = {
   getIdToken: (): Promise<string | null> => driver.getIdToken(false),
 
   fetchProfile: async (idToken: string): Promise<UserProfile> => {
-    return http.get<UserProfile>('/api/auth/me', { token: idToken })
+    return readProfile(await http.get<ProfilePayload>('/api/auth/me', { token: idToken }))
   },
 
   /** Same as `fetchProfile` but cancellable — used by TanStack Query so a
    *  superseded or unmounted request does not keep the connection open. */
   fetchProfileWithSignal: async (idToken: string, signal: AbortSignal): Promise<UserProfile> => {
-    return http.get<UserProfile>('/api/auth/me', { token: idToken, signal })
+    return readProfile(await http.get<ProfilePayload>('/api/auth/me', { token: idToken, signal }))
   },
 
   profileFor,

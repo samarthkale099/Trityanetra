@@ -26,7 +26,7 @@ const PERSISTED = { uid: ACCOUNT.uid, email: ACCOUNT.email, displayName: ACCOUNT
  */
 function serveProfile(role: UserRole, collegeId: string | null = null): UserProfile {
   const user = makeProfile({ role, collegeId })
-  server.use(mswHttp.post(API.session, () => HttpResponse.json({ user })))
+  server.use(mswHttp.get(API.me, () => HttpResponse.json({ user })))
   server.use(mswHttp.get(API.me, () => HttpResponse.json(user)))
   return user
 }
@@ -158,7 +158,7 @@ describe('route guards', () => {
 
   describe('session restoration failures', () => {
     it('keeps a restored session usable when the backend is unreachable', async () => {
-      server.use(mswHttp.post(API.session, () => HttpResponse.error()))
+      server.use(mswHttp.get(API.me, () => HttpResponse.error()))
       restoreSession()
       const router = renderAt('/app/dashboard')
 

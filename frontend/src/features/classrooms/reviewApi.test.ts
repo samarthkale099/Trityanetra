@@ -64,7 +64,7 @@ describe('reviewApi against the mock contract', () => {
       const list = await reviewApi.listSubmissions(REVIEW_TEST)
       const dev = list.submissions.find((s) => s.studentUid === DEV)
       expect(dev).toMatchObject({
-        id: `pending-${REVIEW_TEST}-${DEV}`,
+        id: DEV,
         state: 'NOT_SUBMITTED',
         passedCases: 0,
         totalCases: 5,
@@ -78,7 +78,7 @@ describe('reviewApi against the mock contract', () => {
       const list = await reviewApi.listSubmissions(REVIEW_TEST)
       expect(list.submissions.find((s) => s.studentUid === AARAV)?.state).toBe('LATE')
       expect(list.submissions.find((s) => s.studentUid === KABIR)).toMatchObject({
-        id: `sub-${REVIEW_TEST}-${KABIR}`,
+        id: KABIR,
         state: 'SUBMITTED',
         marks: 8,
       })
@@ -98,9 +98,9 @@ describe('reviewApi against the mock contract', () => {
   describe('getSubmission', () => {
     it('returns a submitted student code and every case result', async () => {
       asUser(TEACHER_UID)
-      const detail = await reviewApi.getSubmission(REVIEW_TEST, `sub-${REVIEW_TEST}-${RIYA}`)
+      const detail = await reviewApi.getSubmission(REVIEW_TEST, RIYA)
 
-      expect(detail.id).toBe(`sub-${REVIEW_TEST}-${RIYA}`)
+      expect(detail.id).toBe(RIYA)
       expect(detail.studentName).toBe('Riya Sharma')
       expect(detail.state).toBe('SUBMITTED')
       expect(detail.code).toContain('indexOf')
@@ -112,7 +112,7 @@ describe('reviewApi against the mock contract', () => {
     it('shows visible case content but withholds hidden content from the teacher', async () => {
       asUser(TEACHER_UID)
       // Meera fails a hidden case, so the withheld row is observable.
-      const detail = await reviewApi.getSubmission(REVIEW_TEST, `sub-${REVIEW_TEST}-${MEERA}`)
+      const detail = await reviewApi.getSubmission(REVIEW_TEST, MEERA)
 
       const visible = detail.cases.find((c) => c.id === 'tc-review-1')
       expect(visible).toMatchObject({
@@ -131,7 +131,7 @@ describe('reviewApi against the mock contract', () => {
 
     it('returns an empty shell for a student who never submitted', async () => {
       asUser(TEACHER_UID)
-      const detail = await reviewApi.getSubmission(REVIEW_TEST, `pending-${REVIEW_TEST}-${DEV}`)
+      const detail = await reviewApi.getSubmission(REVIEW_TEST, DEV)
 
       expect(detail).toMatchObject({
         studentName: 'Dev Patel',
@@ -154,7 +154,7 @@ describe('reviewApi against the mock contract', () => {
 
     it('refuses a student reading a peer submission', async () => {
       asUser(STUDENT_UID)
-      await expect(reviewApi.getSubmission(REVIEW_TEST, `sub-${REVIEW_TEST}-${RIYA}`)).rejects.toMatchObject({
+      await expect(reviewApi.getSubmission(REVIEW_TEST, RIYA)).rejects.toMatchObject({
         status: 403,
       })
     })
@@ -163,7 +163,7 @@ describe('reviewApi against the mock contract', () => {
   describe('saveReview', () => {
     it('saves marks and a comment, and the list reflects them', async () => {
       asUser(TEACHER_UID)
-      const saved = await reviewApi.saveReview(REVIEW_TEST, `sub-${REVIEW_TEST}-${RIYA}`, {
+      const saved = await reviewApi.saveReview(REVIEW_TEST, RIYA, {
         marks: 4,
         comment: 'Short-circuit stops early.',
       })
@@ -178,20 +178,20 @@ describe('reviewApi against the mock contract', () => {
     it('refuses to grade a student who did not submit', async () => {
       asUser(TEACHER_UID)
       await expect(
-        reviewApi.saveReview(REVIEW_TEST, `pending-${REVIEW_TEST}-${DEV}`, { marks: 0, comment: '' }),
+        reviewApi.saveReview(REVIEW_TEST, DEV, { marks: 0, comment: '' }),
       ).rejects.toMatchObject({ status: 409 })
     })
 
     it('rejects marks outside the range', async () => {
       asUser(TEACHER_UID)
       await expect(
-        reviewApi.saveReview(REVIEW_TEST, `sub-${REVIEW_TEST}-${RIYA}`, { marks: 11, comment: '' }),
+        reviewApi.saveReview(REVIEW_TEST, RIYA, { marks: 11, comment: '' }),
       ).rejects.toMatchObject({ status: 400 })
     })
 
     it('clears a saved mark with null', async () => {
       asUser(TEACHER_UID)
-      await reviewApi.saveReview(REVIEW_TEST, `sub-${REVIEW_TEST}-${KABIR}`, { marks: null, comment: '' })
+      await reviewApi.saveReview(REVIEW_TEST, KABIR, { marks: null, comment: '' })
       const list = await reviewApi.listSubmissions(REVIEW_TEST)
       expect(list.submissions.find((s) => s.studentUid === KABIR)?.marks).toBeNull()
     })
@@ -214,14 +214,14 @@ describe('reviewApi against the mock contract', () => {
       asUser(TEACHER_UID)
       await reviewApi.releaseResults(REVIEW_TEST)
       await expect(
-        reviewApi.saveReview(REVIEW_TEST, `sub-${REVIEW_TEST}-${RIYA}`, { marks: 9, comment: 'too late' }),
+        reviewApi.saveReview(REVIEW_TEST, RIYA, { marks: 9, comment: 'too late' }),
       ).rejects.toMatchObject({ status: 409 })
     })
 
     it('reports released state on the detail page', async () => {
       asUser(TEACHER_UID)
       await reviewApi.releaseResults(REVIEW_TEST)
-      const detail = await reviewApi.getSubmission(REVIEW_TEST, `sub-${REVIEW_TEST}-${RIYA}`)
+      const detail = await reviewApi.getSubmission(REVIEW_TEST, RIYA)
       expect(detail.resultsReleased).toBe(true)
       expect(detail.releasedAt).toBeTruthy()
     })

@@ -84,7 +84,7 @@ describe('authApi (Firebase driver bridge)', () => {
   describe('subscribe', () => {
     it('emits an optimistic session, then refines it with the server profile', async () => {
       const teacher = makeProfile({ role: 'TEACHER', collegeId: 'c-1' })
-      server.use(mswHttp.post(API.session, () => HttpResponse.json({ user: teacher })))
+      server.use(mswHttp.get(API.me, () => HttpResponse.json({ user: teacher })))
       const handle = installFakeAuth({ accounts: [ACCOUNT] })
       setAuthDriver(handle.driver)
 
@@ -127,7 +127,7 @@ describe('authApi (Firebase driver bridge)', () => {
     })
 
     it('keeps the session when the backend is unreachable, so routing is not blocked', async () => {
-      server.use(mswHttp.post(API.session, () => HttpResponse.error()))
+      server.use(mswHttp.get(API.me, () => HttpResponse.error()))
       const handle = installFakeAuth({ accounts: [ACCOUNT] })
       setAuthDriver(handle.driver)
 
@@ -181,7 +181,7 @@ describe('authApi (Firebase driver bridge)', () => {
     it('sends the token in the Authorization header, never in the body', async () => {
       let body: unknown = 'not-called'
       server.use(
-        mswHttp.post(API.session, async ({ request }) => {
+        mswHttp.get(API.me, async ({ request }) => {
           body = await request.text()
           expect(request.headers.get('Authorization')).toMatch(/^Bearer fake-id-token\./)
           return HttpResponse.json({ user: makeProfile() })

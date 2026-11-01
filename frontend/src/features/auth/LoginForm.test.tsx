@@ -148,7 +148,7 @@ describe('LoginForm', () => {
   })
 
   it('signs in and redirects to the role home', async () => {
-    server.use(mswHttp.post(API.session, () => HttpResponse.json({ user: makeProfile() })))
+    server.use(mswHttp.get(API.me, () => HttpResponse.json({ user: makeProfile() })))
     const user = userEvent.setup()
     renderForm()
 
@@ -161,7 +161,7 @@ describe('LoginForm', () => {
 
   it('disables the fields and shows a busy state until the server confirms the session', async () => {
     server.use(
-      mswHttp.post(API.session, async () => {
+      mswHttp.get(API.me, async () => {
         await new Promise((resolve) => setTimeout(resolve, 150))
         return HttpResponse.json({ user: makeProfile() })
       }),
@@ -182,7 +182,7 @@ describe('LoginForm', () => {
   })
 
   it('does not hang when the session exchange fails, and still lands on the role home', async () => {
-    server.use(mswHttp.post(API.session, () => HttpResponse.error()))
+    server.use(mswHttp.get(API.me, () => HttpResponse.error()))
     const user = userEvent.setup()
     renderForm()
 
@@ -231,7 +231,7 @@ describe('LoginForm', () => {
       release = resolve
     })
     server.use(
-      mswHttp.post(API.session, async () => {
+      mswHttp.get(API.me, async () => {
         sessionCalls += 1
         await held
         return HttpResponse.json({ user: makeProfile() })

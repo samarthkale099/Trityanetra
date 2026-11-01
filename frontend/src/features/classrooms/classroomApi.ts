@@ -157,7 +157,11 @@ export const classroomApi = {
       description: clean(input.description ?? '', 500),
     }
     const payload = await http.post<{ data: { id: string } }>('/api/classrooms', { body })
-    return toClassroom({ ...body, id: unwrap(payload).id, createdAt: new Date().toISOString() })
+    const id = unwrap(payload).id
+    // The create response carries only the id; read the stored classroom back
+    // so the owner, college and timestamps are the server's, not guesses.
+    const stored = (await classroomApi.listMine()).find((classroom) => classroom.id === id)
+    return stored ?? toClassroom({ ...body, id, createdAt: new Date().toISOString() })
   },
 
   /**

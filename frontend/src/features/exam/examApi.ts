@@ -225,21 +225,35 @@ export const examApi = {
       // that would throw away an in-progress attempt.
       retryOnUnauthorized: false,
     })
-    return toLobby(unwrap(payload))
+    const lobby = toLobby(unwrap(payload))
+    // A submitted exam is closed: never hand back a fresh editor for it. (The
+    // backend's save/submit routes refuse a locked submission as well.)
+    if (lobby.submission) {
+      throw new ApiError('You have already submitted this test.', { status: 409, code: 'CONFLICT' })
+    }
+    return lobby
   },
 
   submit: async (testId: string, input: SubmitInput): Promise<Submission> => {
-    await http.post<{ message: string }>('/api/submissions', {
-      body: {
-        testId,
-        // The answer shape the plagiarism engine reads: one program per test.
-        answers: { language: input.language, code: sanitizeCode(input.code, 200_000) },
-      },
-      // A 401 here must not trigger the client's refresh-and-sign-out path: the
-      // exam shell re-checks the session itself and shows a re-auth prompt, and a
-      // silent sign-out mid-exam would throw away the student's work.
-      retryOnUnauthorized: false,
-    })
+    try {
+      await http.post<{ message: string }>('/api/submissions', {
+        body: {
+          testId,
+          // The answer shape the plagiarism engine reads: one program per test.
+          answers: { language: input.language, code: sanitizeCode(input.code, 200_000) },
+        },
+        // A 401 here must not trigger the client's refresh-and-sign-out path: the
+        // exam shell re-checks the session itself and shows a re-auth prompt, and a
+        // silent sign-out mid-exam would throw away the student's work.
+        retryOnUnauthorized: false,
+      })
+    } catch (error) {
+      // A retry after a lost response finds the submission already stored: the
+      // backend's lock guard answers 403 "locked". That is success, not failure.
+      const locked =
+        error instanceof ApiError && error.status === 403 && /locked|already submitted/i.test(error.message)
+      if (!locked) throw error
+    }
     return {
       id: `${testId}_me`,
       testId,

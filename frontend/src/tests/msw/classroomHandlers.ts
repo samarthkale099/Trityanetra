@@ -398,40 +398,151 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
       return { error: notFound('That test could not be found.') }
     }
     const member = reviewRosterFor(test).find(
-      (candidate) => submissionIdFor(test.id, candidate.uid) === submissionId,
+      (candidate) => candidate.uid === submissionId || submissionIdFor(test.id, candidate.uid) === submissionId,
     )
     if (!member) return { error: notFound('That submission could not be found.') }
     return { test, member }
   }
 
+  /* ------------------------------------------------------------------------ */
+  /*  Backend-shaped views (the real API wraps payloads as { data })          */
+  /* ------------------------------------------------------------------------ */
+
+  const isEnrolled = (classroomId: string, email: string) =>
+    (fixtures.roster[classroomId] ?? []).some((member) => member.email.toLowerCase() === email.toLowerCase())
+
+  /** Hidden cases keep their id but never their content, as the backend's entry route sends them. */
+  const maskQuestions = (test: TestDetail) =>
+    test.questions.map((q) => ({
+      ...q,
+      testCases: q.testCases.map((tc) => (tc.hidden ? { id: tc.id, hidden: true, input: null, expected: null } : tc)),
+    }))
+
+  const findTest = (testId: string) => {
+    const test = fixtures.tests.find((candidate) => candidate.id === testId)
+    if (!test) return null
+    const classroom = classroomById(test.classroomId)
+    if (!classroom || classroom.collegeId !== COLLEGE_ID) return null
+    return { test, classroom }
+  }
+
+  /** A `GET /api/tests` row: summary fields plus the backend's own names. */
+  const testRow = (testId: string, uid: string, teacher: boolean) => {
+    const summary = asSummary(testId, fixtures, store, uid)!
+    const test = fixtures.tests.find((candidate) => candidate.id === testId)!
+    return {
+      ...summary,
+      startTime: summary.windowStart,
+      endTime: summary.windowEnd,
+      mySubmissionStatus: summary.mySubmissionId ? 'SUBMITTED' : null,
+      // The owner's list carries the full document; a student's never does.
+      ...(teacher ? { questions: test.questions, instructions: test.instructions } : {}),
+    }
+  }
+
+  const submissionStatusFor = (testId: string, uid: string) => {
+    const submitted =
+      store.reviews.has(`${testId}:${uid}`) ||
+      store.submissions.some((s) => s.testId === testId && s.uid === uid && s.status !== 'FAILED')
+    if (!submitted) return null
+    const live = store.submissions.find((s) => s.testId === testId && s.uid === uid)
+    return { status: 'SUBMITTED', submittedAt: live?.submittedAt ?? new Date(nowMs).toISOString() }
+  }
+
+  const backendReviewList = (test: TestDetail) => {
+    const list = buildReviewList(test)
+    return {
+      testId: list.testId,
+      testTitle: list.testTitle,
+      maxMarks: list.maxMarks,
+      resultsReleasedAt: list.releasedAt,
+      submissions: list.submissions.map((row) => ({
+        studentId: row.studentUid,
+        studentName: row.studentName,
+        studentEmail: row.studentEmail,
+        state: row.state,
+        submittedAt: row.submittedAt,
+        marks: row.marks,
+        maxMarks: row.maxMarks,
+        passedCases: row.passedCases,
+        totalCases: row.totalCases,
+        flags: flagCountsFor(test.id, row.studentUid),
+      })),
+    }
+  }
+
+  const backendReviewDetail = (test: TestDetail, member: { uid: string; email: string; displayName: string }) => {
+    const detail = buildReviewDetail(test, member as never)
+    return {
+      testId: detail.testId,
+      testTitle: detail.testTitle,
+      studentId: detail.studentUid,
+      studentName: detail.studentName,
+      studentEmail: detail.studentEmail,
+      state: detail.state,
+      submittedAt: detail.submittedAt,
+      answers: detail.state === 'NOT_SUBMITTED' ? null : { language: detail.language, code: detail.code },
+      cases: detail.cases,
+      passedCases: detail.passedCases,
+      totalCases: detail.totalCases,
+      marks: detail.marks,
+      maxMarks: detail.maxMarks,
+      comment: detail.comment,
+      resultsReleasedAt: detail.releasedAt,
+      flags: flagCountsFor(test.id, member.uid),
+    }
+  }
+
+  const flagCountsFor = (testId: string, uid: string) => {
+    const counts: Record<string, number> = {}
+    for (const raw of store.monitorEvents) {
+      const event = raw as Record<string, unknown>
+      if (event.testId !== testId || event.uid !== uid) continue
+      const type = String((event as { flagType?: unknown }).flagType ?? '')
+      if (type) counts[type] = (counts[type] ?? 0) + 1
+    }
+    return counts
+  }
+
   const handlers: HttpHandler[] = [
     /* ---------------------------------------------------------------- GET /api/classrooms */
+    // One route for both roles, scoped by the token: a teacher gets their
+    // classrooms with counts, a student only the ones they were added to --
+    // and never the roster.
     mswHttp.get('/api/classrooms', async ({ request }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      // A collegeId query parameter is deliberately ignored: scoping is the
-      // server's job, derived from the verified token.
+      const inCollege = fixtures.classrooms.filter((classroom) => classroom.collegeId === COLLEGE_ID)
       if (TEACHER_ROLES.includes(identity.role)) {
-        return json(fixtures.classrooms.filter((classroom) => classroom.collegeId === COLLEGE_ID))
+        return json({
+          data: inCollege.map((classroom) => {
+            const roster = fixtures.roster[classroom.id] ?? []
+            return {
+              ...classroom,
+              students: roster.filter((m) => !m.pending).map((m) => m.uid),
+              invitedEmails: roster.filter((m) => m.pending).map((m) => m.email),
+              studentCount: roster.filter((m) => !m.pending).length,
+              invitedCount: roster.filter((m) => m.pending).length,
+              testCount: testsFor(classroom.id).length,
+            }
+          }),
+        })
       }
-      return json([])
-    }),
-
-    /* ------------------------------------------------------- GET /api/classrooms/mine */
-    // Declared before `/api/classrooms/:classroomId` so "mine" is never read as
-    // an id. MSW matches in order, so this ordering is load-bearing.
-    mswHttp.get('/api/classrooms/mine', async ({ request }) => {
-      const failure = await authenticate(request)
-      if (failure) return failure
-      const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
-      if (!identity) return unauthorized()
-      return json(
-        fixtures.classrooms.filter(
-          (classroom) => classroom.collegeId === COLLEGE_ID && (fixtures.roster[classroom.id] ?? []).some((member) => member.email.toLowerCase() === identity.email.toLowerCase()),
-        ),
-      )
+      return json({
+        data: inCollege
+          .filter((classroom) => isEnrolled(classroom.id, identity.email))
+          .map(({ id, name, subject, description, teacherName, collegeId, createdAt }) => ({
+            id,
+            name,
+            subject,
+            description,
+            teacherName,
+            collegeId,
+            createdAt,
+          })),
+      })
     }),
 
     /* -------------------------------------------------- GET /api/classrooms/:classroomId */
@@ -440,21 +551,14 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const classroom = classroomById(String(params.classroomId))
-      // A classroom in another college is reported as missing, not forbidden, so
-      // the response does not confirm that it exists.
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That classroom could not be found.')
-      /*
-       * Teacher-only, and this is the rule the mock has to get right: the payload
-       * carries `students`, so a 200 here would hand a student every classmate's
-       * name and email. Enrolment is checked on the routes a student actually
-       * uses (`/api/classrooms/mine`, the test list, the lobby) rather than by
-       * letting them read the teacher's view of the room.
-       */
+      // Teacher-only: the payload carries the roster.
       if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only the teacher who owns this classroom can open it.')
+        return forbidden('Forbidden: Insufficient permissions')
       }
-      return json(detailOf(classroom, identity.uid))
+      const classroom = classroomById(String(params.classroomId))
+      // Another college's classroom is reported as missing, not forbidden.
+      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('Classroom not found')
+      return json({ data: detailOf(classroom, identity.uid) })
     }),
 
     /* -------------------------------------------------------- POST /api/classrooms */
@@ -463,7 +567,7 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Only teachers can create classrooms.')
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
 
       const body = (await request.json()) as { name?: string; subject?: string; description?: string }
       const name = String(body.name ?? '').trim()
@@ -481,47 +585,51 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
         description: String(body.description ?? '').trim(),
         teacherId: identity.uid,
         teacherName: identity.displayName,
-        joinCode: `NEW${String(store.joinCodeSeq).padStart(2, '0')}`,
         studentCount: 0,
         testCount: 0,
         createdAt: new Date(nowMs).toISOString(),
       }
       fixtures.classrooms.push(created)
       fixtures.roster[created.id] = []
-      return json(created, 201)
+      return json({ message: 'Classroom created successfully', data: { id: created.id } }, 201)
     }),
 
     /* ------------------------------------ POST /api/classrooms/:classroomId/students */
-    // Teacher-only enrolment by email. Unregistered addresses are accepted as
-    // `pending`; re-adding an enrolled address is reported, not duplicated.
+    // Enrolment by email. Registered students are added, unregistered emails are
+    // kept as invites; re-adding is reported, not duplicated.
     mswHttp.post('/api/classrooms/:classroomId/students', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const classroom = classroomById(String(params.classroomId))
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That classroom could not be found.')
       if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only the teacher who owns this classroom can add students.')
+        return forbidden('Forbidden: Insufficient permissions')
       }
+      const classroom = classroomById(String(params.classroomId))
+      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('Classroom not found')
 
       const body = (await request.json()) as { emails?: unknown }
       const emails = Array.isArray(body.emails)
         ? [...new Set(body.emails.map((email) => String(email).trim().toLowerCase()).filter(Boolean))]
         : []
       if (emails.length === 0) {
-        return json({ message: 'Enter at least one student email.', code: 'VALIDATION_ERROR' }, 400)
-      }
-      if (emails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
-        return json({ message: 'One or more of those emails is not valid.', code: 'VALIDATION_ERROR' }, 400)
+        return json({ message: 'Enter at least one student email', code: 'VALIDATION_ERROR' }, 400)
       }
 
       const roster = fixtures.roster[classroom.id] ?? []
-      const added: string[] = []
-      const alreadyEnrolled: string[] = []
+      const result = {
+        added: [] as string[],
+        invited: [] as string[],
+        alreadyEnrolled: [] as string[],
+        rejected: [] as { email: string; reason: string }[],
+      }
       for (const email of emails) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          result.rejected.push({ email, reason: 'Not a valid email address' })
+          continue
+        }
         if (roster.some((member) => member.email.toLowerCase() === email)) {
-          alreadyEnrolled.push(email)
+          result.alreadyEnrolled.push(email)
           continue
         }
         const account = knownAccountByEmail(email)
@@ -532,11 +640,16 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
           joinedAt: new Date(nowMs).toISOString(),
           pending: !account,
         })
-        added.push(email)
+        if (account) result.added.push(email)
+        else result.invited.push(email)
       }
       fixtures.roster[classroom.id] = roster
       classroom.studentCount = roster.length
-      return json({ classroom: detailOf(classroom, identity.uid), added, alreadyEnrolled }, added.length > 0 ? 201 : 200)
+      const changed = result.added.length + result.invited.length > 0
+      return json(
+        { message: 'Students updated', result, data: detailOf(classroom, identity.uid) },
+        changed ? 201 : 200,
+      )
     }),
 
     /* ----------------------------- DELETE /api/classrooms/:classroomId/students/:email */
@@ -545,72 +658,60 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const classroom = classroomById(String(params.classroomId))
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That classroom could not be found.')
       if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only the teacher who owns this classroom can remove students.')
+        return forbidden('Forbidden: Insufficient permissions')
       }
+      const classroom = classroomById(String(params.classroomId))
+      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('Classroom not found')
       const email = decodeURIComponent(String(params.email)).toLowerCase()
       const roster = fixtures.roster[classroom.id] ?? []
       const next = roster.filter((member) => member.email.toLowerCase() !== email)
-      if (next.length === roster.length) return notFound('That student is not in this classroom.')
+      if (next.length === roster.length) return notFound('That student is not in this classroom')
       fixtures.roster[classroom.id] = next
       classroom.studentCount = next.length
-      return json(detailOf(classroom, identity.uid))
+      return json({ message: 'Student removed', data: detailOf(classroom, identity.uid) })
     }),
 
-    /* ------------------------------------------- GET /api/classrooms/:classroomId/tests */
-    mswHttp.get('/api/classrooms/:classroomId/tests', async ({ request, params }) => {
+    /* ------------------------------------------------------------ POST /api/tests */
+    mswHttp.post('/api/tests', async ({ request }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const classroom = classroomById(String(params.classroomId))
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That classroom could not be found.')
-      return json(testsFor(classroom.id).map((test) => asSummary(test.id, fixtures, store, identity.uid)!))
-    }),
-
-    /* ---------------------------------------- POST /api/classrooms/:classroomId/tests */
-    mswHttp.post('/api/classrooms/:classroomId/tests', async ({ request, params }) => {
-      const failure = await authenticate(request)
-      if (failure) return failure
-      const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
-      if (!identity) return unauthorized()
-      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Only teachers can create tests.')
-      const classroom = classroomById(String(params.classroomId))
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That classroom could not be found.')
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
 
       const body = (await request.json()) as {
+        classroomId?: string
         title?: string
         instructions?: string
         language?: ExamLanguage
-        windowStart?: string
-        windowEnd?: string
+        startTime?: string
+        endTime?: string
         durationMinutes?: number
-        questions?: { prompt?: string; starterCode?: string; points?: number; testCases?: unknown[] }[]
+        questions?: { id?: string; prompt?: string; starterCode?: string; points?: number; testCases?: unknown[] }[]
       }
+      const classroom = classroomById(String(body.classroomId ?? ''))
+      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('Classroom not found')
       const title = String(body.title ?? '').trim()
       if (title.length === 0) {
         return json({ message: 'Give the test a title.', code: 'VALIDATION_ERROR' }, 400)
       }
-      const start = Date.parse(String(body.windowStart ?? ''))
-      const end = Date.parse(String(body.windowEnd ?? ''))
-      if (!Number.isFinite(start) || !Number.isFinite(end)) {
-        return json({ message: 'Set a valid start and end for the test window.', code: 'VALIDATION_ERROR' }, 400)
+      const start = Date.parse(String(body.startTime ?? ''))
+      const end = Date.parse(String(body.endTime ?? ''))
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        return json({ message: 'endTime must be after startTime', code: 'VALIDATION_ERROR' }, 400)
       }
-      if (end <= start) {
-        return json({ message: 'The window must end after it starts.', code: 'VALIDATION_ERROR' }, 400)
-      }
+      store.testSeq += 1
       const questions = (body.questions ?? [])
         .filter((entry) => String(entry.prompt ?? '').trim().length > 0)
         .map(
           (entry, index): Question => ({
-            id: `q-new-${store.testSeq}-${index}`,
+            id: String(entry.id ?? `q${index + 1}`),
             prompt: String(entry.prompt).trim(),
             starterCode: String(entry.starterCode ?? ''),
-            language: (body.language ?? 'javascript') as ExamLanguage,
+            language: (body.language ?? 'python') as ExamLanguage,
             testCases: (entry.testCases ?? []).map((testCase, testIndex) => ({
-              id: `tc-${store.testSeq}-${index}-${testIndex}`,
+              id: String((testCase as { id?: string }).id ?? `c${testIndex + 1}`),
               input: String((testCase as { input?: string }).input ?? ''),
               expected: String((testCase as { expected?: string }).expected ?? ''),
               hidden: Boolean((testCase as { hidden?: boolean }).hidden),
@@ -622,15 +723,13 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
       if (questions.length === 0) {
         return json({ message: 'Add at least one question.', code: 'VALIDATION_ERROR' }, 400)
       }
-
-      store.testSeq += 1
       const detail: TestDetail = {
         id: `test-new-${store.testSeq}`,
         classroomId: classroom.id,
         classroomName: classroom.name,
         title,
         instructions: String(body.instructions ?? '').trim(),
-        language: (body.language ?? 'javascript') as ExamLanguage,
+        language: (body.language ?? 'python') as ExamLanguage,
         windowStart: new Date(start).toISOString(),
         windowEnd: new Date(end).toISOString(),
         durationMinutes: Number(body.durationMinutes ?? 60) || 60,
@@ -653,276 +752,273 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
         mySubmissionId: null,
         createdAt: new Date(nowMs).toISOString(),
       })
-      return json(asSummary(detail.id, fixtures, store, identity.uid), 201)
+      return json({ message: 'Test created successfully', data: { id: detail.id } }, 201)
     }),
 
     /* ------------------------------------------------------------ GET /api/tests */
-    // Static path, listed before `/api/tests/:testId` so it is never read as an id.
     mswHttp.get('/api/tests', async ({ request }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      // Only tests in a classroom this student is enrolled in, in their college.
-      const enrolled = new Set(
-        [...fixtures.classrooms, fixtures.foreignClassroom]
-          .filter(
-            (classroom) =>
-              classroom.collegeId === COLLEGE_ID &&
-              (fixtures.roster[classroom.id] ?? []).some((member) => member.email.toLowerCase() === identity.email.toLowerCase()),
-          )
-          .map((classroom) => classroom.id),
-      )
-      return json(
-        fixtures.tests
-          .filter((test) => enrolled.has(test.classroomId))
-          .map((test) => asSummary(test.id, fixtures, store, identity.uid)!),
-      )
-    }),
-
-    /* ------------------------------------------------------------ GET /api/tests/:testId */
-    mswHttp.get('/api/tests/:testId', async ({ request, params }) => {
-      const failure = await authenticate(request)
-      if (failure) return failure
-      const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
-      if (!identity) return unauthorized()
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      const classroom = classroomById(test.classroomId)
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That test could not be found.')
-      // Hidden test cases never leave the server.
-      return json({ ...test, questions: test.questions.map((q) => ({ ...q, testCases: q.testCases.filter((tc) => !tc.hidden) })) })
+      const teacher = TEACHER_ROLES.includes(identity.role)
+      const visible = fixtures.tests.filter((test) => {
+        const classroom = classroomById(test.classroomId)
+        if (!classroom || classroom.collegeId !== COLLEGE_ID) return false
+        // A student sees only tests of classrooms they were added to.
+        return teacher || isEnrolled(classroom.id, identity.email)
+      })
+      return json({ data: visible.map((test) => testRow(test.id, identity.uid, teacher)) })
     }),
 
     /* ---------------------------------------------------- GET /api/tests/:testId/lobby */
+    // Details, server clock and own status -- no questions, and no timer start.
     mswHttp.get('/api/tests/:testId/lobby', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      const classroom = classroomById(test.classroomId)
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That test could not be found.')
-      const enrolled = (fixtures.roster[classroom.id] ?? []).some((member) => member.email.toLowerCase() === identity.email.toLowerCase())
-      if (!enrolled && !TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('You are not enrolled in this classroom.')
+      const found = findTest(String(params.testId))
+      if (!found) return notFound('Test not found')
+      const { test, classroom } = found
+      if (!isEnrolled(classroom.id, identity.email) && !TEACHER_ROLES.includes(identity.role)) {
+        return forbidden("Forbidden: You are not a member of this test's classroom")
       }
-      /*
-       * Read-only. The lobby is where a student reads the rules, so it must not
-       * start their attempt; only `POST /api/tests/:id/attempts` does that.
-       */
+      const startedAt = store.startedAt.get(`${test.id}:${identity.uid}`) ?? null
       return json({
-        test: { ...test, questions: test.questions.map((q) => ({ ...q, testCases: q.testCases.filter((tc) => !tc.hidden) })) },
-        // Authoritative clock. The client measures its offset against this.
-        serverTime: new Date(nowMs).toISOString(),
-        startedAt: store.startedAt.get(`${test.id}:${identity.uid}`) ?? null,
-        submission: store.submissions.find(
-          (submission) => submission.testId === test.id && submission.uid === identity.uid,
-        ) ?? null,
+        data: {
+          test: {
+            id: test.id,
+            title: test.title,
+            classroomId: test.classroomId,
+            classroomName: test.classroomName,
+            instructions: test.instructions,
+            language: test.language,
+            windowStart: test.windowStart,
+            windowEnd: test.windowEnd,
+            durationMinutes: test.durationMinutes,
+            questionCount: test.questions.length,
+            totalPoints: test.totalPoints,
+          },
+          serverTime: new Date(nowMs).toISOString(),
+          startedAt,
+          deadline: null,
+          submission: submissionStatusFor(test.id, identity.uid),
+        },
       })
     }),
 
-    /* ------------------------------------------- POST /api/tests/:testId/attempts */
-    mswHttp.post('/api/tests/:testId/attempts', async ({ request, params }) => {
+    /* ---------------------------------------------------- GET /api/tests/:testId/entry */
+    // Starts the attempt: the first call latches `startedAt`, never rewritten.
+    mswHttp.get('/api/tests/:testId/entry', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      const classroom = classroomById(test.classroomId)
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That test could not be found.')
-      const enrolled = (fixtures.roster[classroom.id] ?? []).some((member) => member.email.toLowerCase() === identity.email.toLowerCase())
-      if (!enrolled && !TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('You are not enrolled in this classroom.')
+      const found = findTest(String(params.testId))
+      if (!found) return notFound('Test not found')
+      const { test, classroom } = found
+      if (!isEnrolled(classroom.id, identity.email)) {
+        return forbidden("Forbidden: You are not a member of this test's classroom")
       }
-      if (store.submissions.some((s) => s.testId === test.id && s.uid === identity.uid)) {
-        return conflict('You have already submitted this test.')
-      }
-      if (nowMs < Date.parse(test.windowStart)) {
-        return forbidden('This test has not opened yet.')
-      }
-      if (nowMs >= Date.parse(test.windowEnd)) {
-        return forbidden('This test has closed.')
-      }
+      if (nowMs < Date.parse(test.windowStart)) return forbidden('Forbidden: Test has not started yet')
+      if (nowMs > Date.parse(test.windowEnd)) return forbidden('Forbidden: Test has already ended')
 
-      /*
-       * Latched, not overwritten. A reload, a second tab, or a double-click on
-       * "Start" all return the original start time, so the allowance cannot be
-       * reset by re-entering the exam.
-       */
       const startKey = `${test.id}:${identity.uid}`
-      if (!store.startedAt.has(startKey)) {
-        store.startedAt.set(startKey, new Date(nowMs).toISOString())
-      }
+      if (!store.startedAt.has(startKey)) store.startedAt.set(startKey, new Date(nowMs).toISOString())
+      const masked = { ...test, questions: maskQuestions(test) }
       return json({
-        test: { ...test, questions: test.questions.map((q) => ({ ...q, testCases: q.testCases.filter((tc) => !tc.hidden) })) },
-        serverTime: new Date(nowMs).toISOString(),
-        startedAt: store.startedAt.get(startKey) ?? null,
-        submission: null,
+        message: 'Entered exam successfully',
+        data: {
+          ...masked,
+          test: masked,
+          serverTime: new Date(nowMs).toISOString(),
+          startedAt: store.startedAt.get(startKey) ?? null,
+          submission: submissionStatusFor(test.id, identity.uid),
+        },
       })
     }),
 
-    /* ------------------------------------- GET /api/tests/:testId/submissions/mine */
-    mswHttp.get('/api/tests/:testId/submissions/mine', async ({ request, params }) => {
+    /* ------------------------------------------------------ POST /api/submissions/save */
+    mswHttp.post('/api/submissions/save', async ({ request }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      return (
-        json(
-          store.submissions.find((s) => s.testId === test.id && s.uid === identity.uid) ?? null,
-        ) ?? new HttpResponse(null, { status: 204 })
-      )
+      const body = (await request.json()) as { testId?: string }
+      if (submissionStatusFor(String(body.testId ?? ''), identity.uid)) {
+        return forbidden('Forbidden: Submission is locked and cannot be modified')
+      }
+      return json({ message: 'Answers saved successfully' })
     }),
 
-    /* --------------------------------------- POST /api/tests/:testId/submissions */
-    mswHttp.post('/api/tests/:testId/submissions', async ({ request, params }) => {
+    /* ----------------------------------------------------------- POST /api/submissions */
+    // One submission per test+student; a repeat is answered idempotently.
+    mswHttp.post('/api/submissions', async ({ request }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      const testId = String(params.testId)
-      const test = fixtures.tests.find((candidate) => candidate.id === testId)
-      if (!test) return notFound('That test could not be found.')
+      const body = (await request.json()) as { testId?: string; answers?: { code?: string; language?: ExamLanguage } }
+      const found = findTest(String(body.testId ?? ''))
+      if (!found) return notFound('Test not found')
+      const { test, classroom } = found
+      if (!isEnrolled(classroom.id, identity.email)) {
+        return forbidden("Forbidden: You are not a member of this test's classroom")
+      }
 
       store.submitAttempts += 1
-      const body = (await request.json()) as { code?: string; language?: ExamLanguage; idempotencyKey?: string }
-      const idempotencyKey = String(body.idempotencyKey ?? '')
-      if (idempotencyKey.length === 0) {
-        return json({ message: 'A submission needs an idempotency key.', code: 'VALIDATION_ERROR' }, 400)
-      }
-      // Server-side de-duplication: the same key from the same student is one
-      // submission, however many times it arrives.
-      const existing = store.submissions.find(
-        (submission) => submission.testId === testId && submission.uid === identity.uid && submission.idempotencyKey === idempotencyKey,
-      )
-      if (existing) return json(existing, 200)
-
-      // The window is re-checked here: a client clock cannot buy extra time.
-      if (nowMs < Date.parse(test.windowStart)) {
-        return json({ message: 'This test has not opened yet.', code: 'TEST_NOT_OPEN' }, 409)
-      }
-      if (nowMs >= Date.parse(test.windowEnd)) {
-        return json({ message: 'This test has closed.', code: 'TEST_CLOSED' }, 409)
+      // Same order as the backend's middleware: membership, then the window
+      // (server time -- a client clock cannot buy extra time), then the lock.
+      if (nowMs < Date.parse(test.windowStart)) return forbidden('Forbidden: Test has not started yet')
+      if (nowMs > Date.parse(test.windowEnd)) return forbidden('Forbidden: Test has already ended')
+      if (submissionStatusFor(test.id, identity.uid)) {
+        return forbidden('Forbidden: Submission is locked and cannot be modified')
       }
 
       const submission: Submission = {
-        id: `sub-${testId}-${identity.uid}-${idempotencyKey.slice(0, 8)}`,
-        testId,
+        id: `${test.id}_${identity.uid}`,
+        testId: test.id,
         uid: identity.uid,
-        language: (body.language ?? test.language) as ExamLanguage,
-        code: String(body.code ?? ''),
+        language: (body.answers?.language ?? test.language) as ExamLanguage,
+        code: String(body.answers?.code ?? ''),
         status: 'GRADED',
-        idempotencyKey,
+        idempotencyKey: '',
         submittedAt: new Date(nowMs).toISOString(),
         score: 0,
         maxScore: test.totalPoints,
       }
       store.submissions.push(submission)
-      return json(submission, 201)
+      return json({ message: 'Exam submitted successfully' })
     }),
 
-    /* ------------------------------- POST /api/tests/:testId/monitor-events */
-    mswHttp.post('/api/tests/:testId/monitor-events', async ({ request, params }) => {
+    /* ---------------------------------------------- POST /api/monitor/:testId/flags */
+    mswHttp.post('/api/monitor/:testId/flags', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       if (options.monitorEndpoint === false) return notFound('Unknown route.')
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
       const testId = String(params.testId)
-      const test = fixtures.tests.find((candidate) => candidate.id === testId)
-      if (!test) return notFound('That test could not be found.')
-      const body = (await request.json()) as { event?: unknown; events?: unknown[] }
-      const incoming = body.events ?? (body.event ? [body.event] : [])
-      for (const event of incoming) {
-        store.monitorEvents.push({ testId, uid: identity.uid, ...(event as Record<string, unknown>) })
+      if (!findTest(testId)) return notFound('Test not found')
+      const body = (await request.json()) as { flagType?: string; metadata?: Record<string, unknown> }
+      const allowed = ['TAB_SWITCH', 'DEVTOOLS_OPEN', 'PASTE_ATTEMPT', 'FULLSCREEN_EXIT']
+      if (!body.flagType || !allowed.includes(body.flagType)) {
+        return json({ message: 'That request is not valid.', code: 'VALIDATION_ERROR' }, 400)
       }
-      return new HttpResponse(null, { status: 204 })
+      store.monitorEvents.push({ testId, uid: identity.uid, flagType: body.flagType, ...(body.metadata ?? {}) })
+      return json({ message: 'Flag recorded' }, 201)
+    }),
+
+    /* ---------------------------------------------- GET /api/monitor/:testId/flags */
+    mswHttp.get('/api/monitor/:testId/flags', async ({ request, params }) => {
+      const failure = await authenticate(request)
+      if (failure) return failure
+      const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
+      if (!identity) return unauthorized()
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
+      const found = findTest(String(params.testId))
+      if (!found) return notFound('Test not found')
+      const byStudent = new Map<string, { flagType: string; at: string | null; metadata: Record<string, unknown> }[]>()
+      for (const raw of store.monitorEvents) {
+        const event = raw as Record<string, unknown>
+        if (event.testId !== found.test.id) continue
+        const { testId: _t, uid, flagType, at, ...metadata } = event
+        const list = byStudent.get(String(uid)) ?? []
+        list.push({ flagType: String(flagType), at: typeof at === 'string' ? at : null, metadata })
+        byStudent.set(String(uid), list)
+      }
+      const students = [...byStudent.entries()].map(([studentId, flags]) => {
+        const member = reviewRosterFor(found.test).find((m) => m.uid === studentId)
+        const counts: Record<string, number> = {}
+        for (const flag of flags) counts[flag.flagType] = (counts[flag.flagType] ?? 0) + 1
+        return {
+          studentId,
+          studentName: member?.displayName || member?.email || studentId,
+          studentEmail: member?.email ?? '',
+          total: flags.length,
+          counts,
+          flags,
+        }
+      })
+      students.sort((a, b) => b.total - a.total)
+      return json({ data: { testId: found.test.id, students } })
     }),
 
     /* --------------------------------------------- GET /api/tests/:testId/result */
-    // The student's own result. Declared before the review routes; it shares no
-    // path shape with them, and `:testId` alone never matches the extra segment.
     mswHttp.get('/api/tests/:testId/result', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      // Teachers and admins read results through the review screens, not here.
       if (TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Results are viewed through the review screens.')
+        return forbidden('Results are viewed through the review screens')
       }
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      const classroom = classroomById(test.classroomId)
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That test could not be found.')
-      // Only the owning student, and only if they actually submitted. A 404
-      // rather than a 403, so a peer's submission is not confirmed to exist.
-      const submitted =
-        store.reviews.has(`${test.id}:${identity.uid}`) ||
-        store.submissions.some(
-          (submission) =>
-            submission.testId === test.id &&
-            submission.uid === identity.uid &&
-            submission.status !== 'FAILED',
-        )
-      if (!submitted) return notFound('We could not find a result for this test.')
-      return json(buildStudentResult(test, identity.uid))
+      const found = findTest(String(params.testId))
+      if (!found) return notFound('Test not found')
+      // Only the owning student, and only if they submitted: 404 otherwise, so a
+      // peer's submission is not confirmed to exist.
+      if (!submissionStatusFor(found.test.id, identity.uid)) {
+        return notFound('We could not find a result for this test')
+      }
+      const result = buildStudentResult(found.test, identity.uid)
+      return json({
+        data: {
+          testId: result.testId,
+          testTitle: result.testTitle,
+          state: result.state,
+          submittedAt: result.submittedAt,
+          answers: { language: result.language },
+          cases: result.cases,
+          passedCases: result.passedCases,
+          totalCases: result.totalCases,
+          marksReleased: result.marksReleased,
+          resultsReleasedAt: result.releasedAt,
+          marks: result.marks,
+          maxMarks: result.maxMarks,
+          comment: result.comment,
+        },
+      })
     }),
 
-    /* -------------------------------------------- GET /api/tests/:testId/submissions */
-    mswHttp.get('/api/tests/:testId/submissions', async ({ request, params }) => {
+    /* ------------------------------------------ GET /api/submissions/test/:testId */
+    mswHttp.get('/api/submissions/test/:testId', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only a teacher can review submissions.')
-      }
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      const classroom = classroomById(test.classroomId)
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That test could not be found.')
-      return json(buildReviewList(test))
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
+      const found = findTest(String(params.testId))
+      if (!found) return notFound('Test not found')
+      return json({ data: backendReviewList(found.test) })
     }),
 
-    /* -------------------------------- GET /api/tests/:testId/submissions/:submissionId */
-    mswHttp.get('/api/tests/:testId/submissions/:submissionId', async ({ request, params }) => {
+    /* ------------------------------- GET /api/submissions/test/:testId/:studentId */
+    mswHttp.get('/api/submissions/test/:testId/:studentId', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only a teacher can review submissions.')
-      }
-      const target = resolveReviewTarget(String(params.testId), String(params.submissionId))
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
+      const target = resolveReviewTarget(String(params.testId), String(params.studentId))
       if ('error' in target) return target.error
-      return json(buildReviewDetail(target.test, target.member))
+      return json({ data: backendReviewDetail(target.test, target.member) })
     }),
 
-    /* ---------------------------- PUT /api/tests/:testId/submissions/:submissionId/review */
-    mswHttp.put('/api/tests/:testId/submissions/:submissionId/review', async ({ request, params }) => {
+    /* ------------------------ PUT /api/submissions/test/:testId/:studentId/review */
+    mswHttp.put('/api/submissions/test/:testId/:studentId/review', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only a teacher can grade submissions.')
-      }
-      const target = resolveReviewTarget(String(params.testId), String(params.submissionId))
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
+      const target = resolveReviewTarget(String(params.testId), String(params.studentId))
       if ('error' in target) return target.error
       const { test, member } = target
-      // A release freezes the gradings, so a late save cannot contradict what the
-      // students have already been told.
-      if (store.releasedAt.has(test.id)) {
-        return conflict('Results are released, so gradings are locked.')
-      }
+      // A release freezes grading, so a late save cannot contradict the students.
+      if (store.releasedAt.has(test.id)) return conflict('Results are released, so grades are locked')
       const record = store.reviews.get(`${test.id}:${member.uid}`)
-      if (!record) return conflict('This student did not submit this test.')
+      if (!record) return conflict('This student has not submitted this test')
 
       const body = (await request.json()) as { marks?: unknown; comment?: unknown }
       let marks: number | null = null
@@ -930,7 +1026,7 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
         const parsed = Number(body.marks)
         if (!Number.isInteger(parsed) || parsed < 0 || parsed > test.totalPoints) {
           return json(
-            { message: `Enter a whole number of marks between 0 and ${test.totalPoints}.`, code: 'VALIDATION_ERROR' },
+            { message: `Enter a whole number of marks between 0 and ${test.totalPoints}`, code: 'VALIDATION_ERROR' },
             400,
           )
         }
@@ -938,28 +1034,24 @@ export function createMockBackend(options: MockBackendOptions = {}): MockBackend
       }
       record.marks = marks
       record.comment = String(body.comment ?? '')
-      return json(buildReviewDetail(test, member))
+      return json({ message: 'Review saved', data: backendReviewDetail(test, member) })
     }),
 
-    /* ------------------------------------------- POST /api/tests/:testId/submissions/release */
-    mswHttp.post('/api/tests/:testId/submissions/release', async ({ request, params }) => {
+    /* -------------------------------------------- POST /api/tests/:testId/release */
+    mswHttp.post('/api/tests/:testId/release', async ({ request, params }) => {
       const failure = await authenticate(request)
       if (failure) return failure
       const identity = identityFrom(request.headers.get('Authorization'), roles, fixtures)
       if (!identity) return unauthorized()
-      if (!TEACHER_ROLES.includes(identity.role)) {
-        return forbidden('Only a teacher can release results.')
-      }
-      const test = fixtures.tests.find((candidate) => candidate.id === String(params.testId))
-      if (!test) return notFound('That test could not be found.')
-      const classroom = classroomById(test.classroomId)
-      if (!classroom || classroom.collegeId !== COLLEGE_ID) return notFound('That test could not be found.')
-      // Idempotent: releasing twice keeps the original release time, so a
-      // double-click cannot rewrite what the students saw first.
-      if (!store.releasedAt.has(test.id)) {
-        store.releasedAt.set(test.id, new Date(nowMs).toISOString())
-      }
-      return json(buildReviewList(test))
+      if (!TEACHER_ROLES.includes(identity.role)) return forbidden('Forbidden: Insufficient permissions')
+      const found = findTest(String(params.testId))
+      if (!found) return notFound('Test not found')
+      // Idempotent: the first release time is kept.
+      if (!store.releasedAt.has(found.test.id)) store.releasedAt.set(found.test.id, new Date(nowMs).toISOString())
+      return json({
+        message: 'Results released',
+        data: { testId: found.test.id, resultsReleasedAt: store.releasedAt.get(found.test.id) },
+      })
     }),
   ]
 

@@ -55,7 +55,7 @@ const acceptConsent = (user: ReturnType<typeof userEvent.setup>) =>
 describe('RegisterForm', () => {
   beforeEach(() => {
     installFakeAuth()
-    server.use(mswHttp.post(API.session, () => HttpResponse.json({ user: makeProfile() })))
+    server.use(mswHttp.get(API.me, () => HttpResponse.json({ user: makeProfile() })))
   })
 
   afterEach(() => {

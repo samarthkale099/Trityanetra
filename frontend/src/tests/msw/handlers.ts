@@ -112,7 +112,7 @@ export function authHandlers(options: HandlerOptions = {}) {
       return HttpResponse.json({ user })
     }),
 
-    // GET /api/auth/me — returns the profile document directly (not wrapped).
+    // GET /api/auth/me — the backend wraps the profile as { user }.
     mswHttp.get(API.me, async ({ request }) => {
       await wait()
       const user = resolve(request)
@@ -122,7 +122,7 @@ export function authHandlers(options: HandlerOptions = {}) {
           { status: 401 },
         )
       }
-      return HttpResponse.json(user)
+      return HttpResponse.json({ user })
     }),
 
     mswHttp.post(API.logout, () => new HttpResponse(null, { status: 204 })),
@@ -168,5 +168,5 @@ export const errorHandlers = {
     ),
   ],
   offline: () => [mswHttp.get(API.me, () => HttpResponse.error())],
-  slow: (ms: number) => [mswHttp.get(API.me, async () => { await delay(ms); return HttpResponse.json(makeProfile()) })],
+  slow: (ms: number) => [mswHttp.get(API.me, async () => { await delay(ms); return HttpResponse.json({ user: makeProfile() }) })],
 }

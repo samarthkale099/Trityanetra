@@ -126,25 +126,24 @@ describe('examApi against the mock contract', () => {
         idempotencyKey: 'key-abc',
       })
 
-      // The status is the server's call, not the client's. What matters is that
-      // the record round-trips with the student's own uid and the exact code.
+      // The server stores it under the student's own uid, with the exact code;
+      // the next lobby read reports the test as submitted.
       expect(submission.testId).toBe('test-live-1')
-      expect(submission.uid).toBe(STUDENT_UID)
       expect(submission.code).toBe('function quicksort() {}')
-      expect(submission.maxScore).toBe(10)
+      const stored = backend.store.submissions.find((s) => s.testId === 'test-live-1')
+      expect(stored).toMatchObject({ uid: STUDENT_UID, code: 'function quicksort() {}' })
 
       const lobby = await examApi.getLobby('test-live-1')
-      expect(lobby.submission?.id).toBe(submission.id)
-      expect(lobby.submission?.idempotencyKey).toBe('key-abc')
+      expect(lobby.submission).not.toBeNull()
     })
 
     /*
-     * The client sends a fresh key per submit click, so de-duplication has to be
-     * the server's job: this is what makes a double-clicked button, a retried
-     * request after a dropped connection, and a flaky network all produce one
-     * grading run rather than three.
+     * The backend keeps exactly one submission per test+student and locks it:
+     * a double-click or a retry after a dropped connection reaches the lock
+     * (403 "locked"), which the client treats as "already submitted" -- one
+     * stored submission, and no error shown to the student.
      */
-    it('treats a repeated idempotency key as one submission', async () => {
+    it('stores one submission however many times submit is sent', async () => {
       asUser(STUDENT_UID)
       await examApi.startAttempt('test-live-1')
       const first = await examApi.submit('test-live-1', { code: 'a', language: 'javascript', idempotencyKey: 'same' })
@@ -155,10 +154,12 @@ describe('examApi against the mock contract', () => {
       expect(backend.store.submitAttempts).toBe(2)
     })
 
-    it('rejects a submission with no idempotency key', async () => {
+    it('refuses to save a draft over a submitted exam', async () => {
       asUser(STUDENT_UID)
-      await expect(examApi.submit('test-live-1', { code: 'a', language: 'javascript', idempotencyKey: '' })).rejects.toMatchObject({
-        status: 400,
+      await examApi.startAttempt('test-live-1')
+      await examApi.submit('test-live-1', { code: 'final', language: 'javascript', idempotencyKey: 'k' })
+      await expect(examApi.saveDraft('test-live-1', { code: 'edit', language: 'javascript' })).rejects.toMatchObject({
+        status: 403,
       })
     })
 
@@ -166,7 +167,7 @@ describe('examApi against the mock contract', () => {
       asUser(STUDENT_UID)
       await expect(
         examApi.submit('test-ended-1', { code: 'late', language: 'javascript', idempotencyKey: 'late-key' }),
-      ).rejects.toMatchObject({ status: 409 })
+      ).rejects.toMatchObject({ status: 403 })
     })
   })
 

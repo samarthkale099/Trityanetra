@@ -77,7 +77,7 @@ function serveRole(role: UserRole): void {
   const user = makeProfile({ role, collegeId: role === 'STUDENT' ? null : 'college-mit' })
   // Auth registered last: newest-handler-wins, so the role the session exchange
   // reports is the one the shell renders.
-  server.use(mswHttp.post(API.session, () => HttpResponse.json({ user })))
+  server.use(mswHttp.get(API.me, () => HttpResponse.json({ user })))
   server.use(mswHttp.get(API.me, () => HttpResponse.json(user)))
   installFakeAuth({ accounts: [ACCOUNT], persisted: PERSISTED })
 }
