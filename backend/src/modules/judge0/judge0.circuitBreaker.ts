@@ -1,5 +1,5 @@
 import CircuitBreaker from 'opossum';
-import { submitCodeToJudge0 } from './judge0.client';
+import { submitCodeToJudge0, Judge0SubmitOptions } from './judge0.client';
 
 // Circuit breaker configuration
 // - timeout: 10000ms (10s is a sane max wait time for code execution to return from Judge0)
@@ -15,9 +15,9 @@ const options = {
 
 export const judge0CircuitBreaker = new CircuitBreaker(submitCodeToJudge0, options);
 
-export const submitCodeWithBreaker = async (code: string, languageId: number) => {
+export const submitCodeWithBreaker = async (code: string, languageId: number, options: Judge0SubmitOptions = {}) => {
   try {
-    return await judge0CircuitBreaker.fire(code, languageId);
+    return await judge0CircuitBreaker.fire(code, languageId, options);
   } catch (error: any) {
     if (error && error.code === 'EOPENBREAKER') {
       throw new Error('Judge0 temporarily unavailable');

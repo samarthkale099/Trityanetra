@@ -22,8 +22,13 @@ const makeApp = () => {
   return a;
 };
 
+// The callback URL carries the secret and our own run id: /judge0/callback/<secret>?run=<run id>
+// (pass null for "no run id": undefined would just pick the default)
+const cb = (secret: string, run: string | null = 'run1') =>
+  `/judge0/callback/${encodeURIComponent(secret)}${run === null ? '' : `?run=${run}`}`;
+
 const body = (over: Record<string, unknown> = {}) => ({
-  token: 'run-1',
+  token: 'judge0-own-token',
   status: { id: 3, description: 'Accepted' },
   stdout: 'hello\n',
   stderr: null,
@@ -33,9 +38,9 @@ const body = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const seedRun = (id = 'run-1', status = 'PENDING') =>
+const seedRun = (id = 'run1', status = 'PENDING') =>
   db.collection(COLLECTIONS.JUDGE0_RUNS).doc(id).set({ status, submissionId: 's1' });
-const getRun = async (id = 'run-1') => (await db.collection(COLLECTIONS.JUDGE0_RUNS).doc(id).get()).data();
+const getRun = async (id = 'run1') => (await db.collection(COLLECTIONS.JUDGE0_RUNS).doc(id).get()).data();
 
 describe('Security: Judge0 callback forgery', () => {
   const original = env.JUDGE0_CALLBACK_TOKEN;
@@ -51,7 +56,7 @@ describe('Security: Judge0 callback forgery', () => {
       'rejects wrong URL token %j (401), whatever its length',
       async (tok) => {
         await seedRun();
-        const res = await request(makeApp()).put(`/judge0/callback/${encodeURIComponent(tok)}`).send(body());
+        const res = await request(makeApp()).put(cb(tok)).send(body());
         expect(res.status).toBe(401);
         expect((await getRun())?.status).toBe('PENDING');
       }
@@ -60,7 +65,7 @@ describe('Security: Judge0 callback forgery', () => {
     it('does not accept the correct token from a header, query string or body when the URL token is wrong', async () => {
       await seedRun();
       const res = await request(makeApp())
-        .put(`/judge0/callback/wrong?token=${TOKEN}`)
+        .put(`/judge0/callback/wrong?run=run1&token=${TOKEN}`)
         .set('X-Judge0-Token', TOKEN)
         .send({ ...body(), 'x-judge0-token': TOKEN });
       expect(res.status).toBe(401);
@@ -71,11 +76,11 @@ describe('Security: Judge0 callback forgery', () => {
       env.JUDGE0_CALLBACK_TOKEN = undefined;
       try {
         for (const tok of ['undefined', 'null', 'anything', TOKEN]) {
-          const res = await request(makeApp()).put(`/judge0/callback/${tok}`).send(body());
+          const res = await request(makeApp()).put(cb(tok)).send(body());
           expect(res.status, `token=${tok}`).toBe(401);
         }
         env.JUDGE0_CALLBACK_TOKEN = '';
-        const res = await request(makeApp()).put('/judge0/callback/x').send(body());
+        const res = await request(makeApp()).put(cb('x')).send(body());
         expect(res.status).toBe(401);
       } finally {
         env.JUDGE0_CALLBACK_TOKEN = TOKEN;
@@ -92,10 +97,10 @@ describe('Security: Judge0 callback forgery', () => {
     });
 
     it('is mounted at /api/judge0/callback/:token on the real app, with no JWT required', async () => {
-      const bad = await request(realApp).put('/api/judge0/callback/not-the-token').send(body());
+      const bad = await request(realApp).put('/api/judge0/callback/not-the-token?run=run1').send(body());
       expect(bad.status).toBe(401);
       await seedRun();
-      const good = await request(realApp).put(`/api/judge0/callback/${TOKEN}`).send(body());
+      const good = await request(realApp).put(`/api/judge0/callback/${TOKEN}?run=run1`).send(body());
       expect(good.status).toBe(200);
       expect((await getRun())?.status).toBe('DONE');
     });
@@ -104,7 +109,7 @@ describe('Security: Judge0 callback forgery', () => {
   describe('accepted callbacks', () => {
     it.each(['put', 'post'] as const)('a correct token completes a pending run (%s)', async (method) => {
       await seedRun();
-      const res = await request(makeApp())[method](`/judge0/callback/${TOKEN}`).send(body());
+      const res = await request(makeApp())[method](cb(TOKEN)).send(body());
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ received: true, applied: true });
       const run = await getRun();
@@ -114,13 +119,23 @@ describe('Security: Judge0 callback forgery', () => {
     });
 
     it.each([
-      ['a missing judge0 token', { token: undefined }],
-      ['a token that could be a path', { token: '../users/x' }],
       ['a missing status', { status: undefined }],
       ['a non-numeric status id', { status: { id: 'three' } }],
     ])('rejects a malformed body: %s (400) and writes nothing', async (_name, over) => {
       await seedRun();
-      const res = await request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body(over));
+      const res = await request(makeApp()).put(cb(TOKEN)).send(body(over));
+      expect(res.status).toBe(400);
+      expect((await getRun())?.status).toBe('PENDING');
+    });
+
+    it.each([
+      ['no run id', null],
+      ['a run id that could be a path', '..%2Fusers%2Fx'],
+      ['a run id with a slash', 'a/b'],
+      ['an over-long run id', 'x'.repeat(100)],
+    ])('rejects %s (400) and writes nothing', async (_name, run) => {
+      await seedRun();
+      const res = await request(makeApp()).put(cb(TOKEN, run)).send(body());
       expect(res.status).toBe(400);
       expect((await getRun())?.status).toBe('PENDING');
     });
@@ -129,11 +144,11 @@ describe('Security: Judge0 callback forgery', () => {
   describe('replay and state', () => {
     it('rejects a replayed callback: the first stored result is never overwritten', async () => {
       await seedRun();
-      const first = await request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body());
+      const first = await request(makeApp()).put(cb(TOKEN)).send(body());
       expect(first.body.applied).toBe(true);
 
       const replay = await request(makeApp())
-        .put(`/judge0/callback/${TOKEN}`)
+        .put(cb(TOKEN))
         .send(body({ status: { id: 4, description: 'Wrong Answer' }, stdout: 'forged' }));
       expect(replay.status).toBe(200);
       expect(replay.body.applied).toBe(false);
@@ -146,23 +161,23 @@ describe('Security: Judge0 callback forgery', () => {
     it('two concurrent callbacks for one run apply exactly once', async () => {
       await seedRun();
       const [a, b] = await Promise.all([
-        request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body({ stdout: 'A' })),
-        request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body({ stdout: 'B' })),
+        request(makeApp()).put(cb(TOKEN)).send(body({ stdout: 'A' })),
+        request(makeApp()).put(cb(TOKEN)).send(body({ stdout: 'B' })),
       ]);
       expect([a.body.applied, b.body.applied].filter(Boolean)).toHaveLength(1);
       expect(['A', 'B']).toContain((await getRun())?.result.stdout);
     });
 
     it('ignores callbacks for runs that are not awaiting a result', async () => {
-      await seedRun('run-done', 'DONE');
-      const res = await request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body({ token: 'run-done' }));
+      await seedRun('rundone', 'DONE');
+      const res = await request(makeApp()).put(cb(TOKEN, 'rundone')).send(body());
       expect(res.status).toBe(200);
       expect(res.body.applied).toBe(false);
-      expect((await getRun('run-done'))?.result).toBeUndefined();
+      expect((await getRun('rundone'))?.result).toBeUndefined();
     });
 
     it('ignores a callback for an unknown run and does not create one', async () => {
-      const res = await request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body({ token: 'nope' }));
+      const res = await request(makeApp()).put(cb(TOKEN, 'nope')).send(body());
       expect(res.status).toBe(200);
       expect(res.body.applied).toBe(false);
       expect((await db.collection(COLLECTIONS.JUDGE0_RUNS).doc('nope').get()).exists).toBe(false);
@@ -170,7 +185,7 @@ describe('Security: Judge0 callback forgery', () => {
 
     it.each([1, 2])('ignores non-final status %i (in queue / processing) and keeps the run pending', async (id) => {
       await seedRun();
-      const res = await request(makeApp()).put(`/judge0/callback/${TOKEN}`).send(body({ status: { id } }));
+      const res = await request(makeApp()).put(cb(TOKEN)).send(body({ status: { id } }));
       expect(res.body.applied).toBe(false);
       expect((await getRun())?.status).toBe('PENDING');
     });

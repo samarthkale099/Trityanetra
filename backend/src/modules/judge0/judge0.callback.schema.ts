@@ -1,9 +1,12 @@
 import { z } from 'zod';
 
-// Judge0 puts its own submission token in the body; it becomes a Firestore document id,
-// so it must be a plain safe string (no slashes etc.).
+// Our own run id (a Firestore auto id), taken from the callback URL's ?run= query. It becomes a document
+// id, so it must be a plain safe string (no slashes etc.).
+export const runIdSchema = z.string().regex(/^[A-Za-z0-9]{1,64}$/, 'invalid run id');
+
 export const judge0CallbackSchema = z.object({
-  token: z.string().regex(/^[A-Za-z0-9-]{1,128}$/, 'invalid judge0 token'),
+  // Judge0's own token. Informational only: it is not a secret and is not used for lookup.
+  token: z.string().max(128).optional(),
   status: z.object({
     id: z.number().int(),
     description: z.string().max(200).optional(),

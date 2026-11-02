@@ -21,6 +21,8 @@ export const env = {
   JUDGE0_API_URL: process.env.JUDGE0_API_URL,
   JUDGE0_API_KEY: process.env.JUDGE0_API_KEY,
   JUDGE0_CALLBACK_TOKEN: process.env.JUDGE0_CALLBACK_TOKEN,
+  // Public base URL Judge0 can reach us at, e.g. https://api.example.com (no trailing slash needed).
+  JUDGE0_CALLBACK_BASE_URL: process.env.JUDGE0_CALLBACK_BASE_URL,
 };
 
 if (!env.JUDGE0_API_URL || !env.JUDGE0_API_KEY) {
