@@ -48,7 +48,7 @@ redis/ docker-compose.yml
 ```
 
 ## Known gaps
-- Judge0: callback signing scheme and real execution are not finalized (stubs / todo tests for replay and callback state).
+- Judge0: callbacks are authenticated by a secret in the URL (`/api/judge0/callback/<JUDGE0_CALLBACK_TOKEN>`), with replay/state checks against `judge0Runs`. The code that submits to Judge0 and creates the `PENDING` run record is still a stub, so real callbacks are ignored until it exists.
 - `answers` shape for coding questions is not yet agreed with the frontend.
 - First admin/college bootstrap is manual (`scripts/bootstrap-admin.ts`, then `POST /api/colleges`).
 - Maximum class size for plagiarism checks (currently capped at 50) needs confirming.

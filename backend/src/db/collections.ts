@@ -6,4 +6,5 @@ export const COLLECTIONS = {
   SUBMISSIONS: 'submissions',
   MONITOR_FLAGS: 'monitorFlags',
   PLAGIARISM_RESULTS: 'plagiarismResults',
+  JUDGE0_RUNS: 'judge0Runs',
 } as const;
