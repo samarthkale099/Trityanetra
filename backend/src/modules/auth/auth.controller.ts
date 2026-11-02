@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../../config/env';
 import { db } from '../../db/firestore';
 import { COLLECTIONS } from '../../db/collections';
+import { findCollegeByEmail } from '../college/college.service';
 
 export const assignUserRole = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -31,10 +32,28 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
   try {
     const { email, password, role, collegeId } = req.body;
 
-    // The college must exist: an arbitrary collegeId string must never create an account.
-    const collegeDoc = await db.collection(COLLECTIONS.COLLEGES).doc(collegeId).get();
-    if (!collegeDoc.exists) {
-      return res.status(400).json({ error: 'Unknown collegeId' });
+    // Work out the college. An email on a college's emailDomain is placed there automatically;
+    // otherwise a collegeId must be given, and it must not belong to a college that restricts its domain.
+    const matched = await findCollegeByEmail(email);
+    let resolvedCollegeId: string;
+    if (matched) {
+      if (collegeId && collegeId !== matched.id) {
+        return res.status(400).json({ error: 'This email belongs to a different college than the collegeId given' });
+      }
+      resolvedCollegeId = matched.id;
+    } else {
+      if (!collegeId) {
+        return res.status(400).json({ error: 'No college matches this email domain; provide a collegeId' });
+      }
+      // The college must exist: an arbitrary collegeId string must never create an account.
+      const collegeDoc = await db.collection(COLLECTIONS.COLLEGES).doc(collegeId).get();
+      if (!collegeDoc.exists) {
+        return res.status(400).json({ error: 'Unknown collegeId' });
+      }
+      if (collegeDoc.data()?.emailDomain) {
+        return res.status(403).json({ error: 'This college only accepts registrations from its own email domain' });
+      }
+      resolvedCollegeId = collegeId;
     }
 
     const usersRef = db.collection(COLLECTIONS.USERS);
@@ -54,7 +73,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
       email,
       passwordHash: hashedPassword,
       role,
-      collegeId: collegeId || null,
+      collegeId: resolvedCollegeId,
       createdAt: new Date(),
     };
 

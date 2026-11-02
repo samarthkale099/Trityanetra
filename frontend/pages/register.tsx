@@ -17,7 +17,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, role: 'STUDENT', collegeId }),
+        body: JSON.stringify({ email, password, role: 'STUDENT', ...(collegeId.trim() ? { collegeId: collegeId.trim() } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -41,8 +41,12 @@ export default function RegisterPage() {
           onChange={(e) => setEmail(e.target.value)} required />
         <input className="w-full border rounded p-2" type="password" placeholder="Password" value={password}
           onChange={(e) => setPassword(e.target.value)} required />
-        <input className="w-full border rounded p-2" placeholder="College ID (from your college)" value={collegeId}
-          onChange={(e) => setCollegeId(e.target.value)} required />
+        <input className="w-full border rounded p-2" placeholder="College ID (optional)" value={collegeId}
+          onChange={(e) => setCollegeId(e.target.value)} />
+        <p className="text-xs text-gray-500">
+          Use your college email and you are placed in your college automatically. Only fill in the college ID if your
+          email is not on your college's domain.
+        </p>
         <button className="w-full bg-blue-600 text-white rounded p-2 disabled:opacity-50" disabled={busy}>
           {busy ? 'Registering…' : 'Register'}
         </button>
