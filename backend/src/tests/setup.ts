@@ -12,6 +12,18 @@ process.env.AST_ENGINE_URL = 'http://localhost:8000'; // Satisfy env.ts
 process.env.AST_ENGINE_SECRET = 'secret'; // Satisfy env.ts
 process.env.GCLOUD_PROJECT = 'demo-test';
 
+// Neutralize code-execution config so the developer's local .env (e.g. CODE_EXECUTION_PROVIDER=paiza)
+// cannot leak into tests. Each test sets exactly the provider/keys it needs. These are set (not deleted)
+// so dotenv.config() in env.ts will not re-populate them from .env.
+process.env.CODE_EXECUTION_PROVIDER = '';
+process.env.JUDGE0_API_URL = '';
+process.env.JUDGE0_API_KEY = '';
+process.env.JUDGE0_CALLBACK_TOKEN = '';
+process.env.JUDGE0_CALLBACK_BASE_URL = '';
+process.env.PISTON_API_URL = '';
+process.env.PAIZA_API_URL = '';
+process.env.PAIZA_API_KEY = '';
+
 import { vi } from 'vitest';
 
 vi.mock('ioredis', () => {

@@ -5,6 +5,7 @@ import { env } from '../../config/env';
 import { Judge0CallbackBody } from './judge0.callback.schema';
 import { Judge0RawResult } from './judge0.client';
 import { runCodeOnPiston } from './piston.client';
+import { runCodeOnPaiza } from './paiza.client';
 import { ALLOWED_LANGUAGE_IDS, JUDGE0_BOUNDS } from './judge0.constants';
 
 const httpError = (status: number, message: string) => {
@@ -38,7 +39,7 @@ export const runCodeService = async (
 
   // Pick the engine: explicit CODE_EXECUTION_PROVIDER wins; otherwise Judge0 if it is configured, else Piston.
   const configured = (env.CODE_EXECUTION_PROVIDER || '').toLowerCase();
-  const provider = configured === 'piston' || configured === 'judge0'
+  const provider = ['piston', 'judge0', 'paiza'].includes(configured)
     ? configured
     : (env.JUDGE0_API_URL && env.JUDGE0_API_KEY ? 'judge0' : 'piston');
 
@@ -70,9 +71,10 @@ export const runCodeService = async (
     }
 
     // Synchronous: wait for the result inline (works on localhost, no public URL needed).
-    const raw: Judge0RawResult = provider === 'piston'
-      ? await runCodeOnPiston(languageId, code, stdin)
-      : await runSyncWithBreaker(code, languageId, { stdin });
+    const raw: Judge0RawResult =
+      provider === 'piston' ? await runCodeOnPiston(languageId, code, stdin) :
+      provider === 'paiza' ? await runCodeOnPaiza(languageId, code, stdin) :
+      await runSyncWithBreaker(code, languageId, { stdin });
     const result = buildResult(raw);
     await ref.update({ status: 'DONE', result, provider, judge0Token: raw.token ?? null, completedAt: new Date() });
     return { runId: ref.id, status: 'DONE', result };

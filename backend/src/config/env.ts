@@ -25,6 +25,9 @@ export const env = {
   CODE_EXECUTION_PROVIDER: process.env.CODE_EXECUTION_PROVIDER,
   // Piston API base (default is the free public instance).
   PISTON_API_URL: process.env.PISTON_API_URL,
+  // Paiza.IO API base and key (default key 'guest' needs no signup).
+  PAIZA_API_URL: process.env.PAIZA_API_URL,
+  PAIZA_API_KEY: process.env.PAIZA_API_KEY,
   // Public base URL Judge0 can reach us at, e.g. https://api.example.com (no trailing slash needed).
   JUDGE0_CALLBACK_BASE_URL: process.env.JUDGE0_CALLBACK_BASE_URL,
   // Public URL of the frontend, used to build email-verification links. Defaults to localhost in dev.
