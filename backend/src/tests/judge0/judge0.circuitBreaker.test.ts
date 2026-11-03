@@ -4,6 +4,7 @@ import { submitCodeWithBreaker, judge0CircuitBreaker } from '../../modules/judge
 
 vi.mock('../../modules/judge0/judge0.client', () => ({
   submitCodeToJudge0: vi.fn(),
+  runCodeToJudge0Sync: vi.fn(),
 }));
 
 describe('Judge0 Circuit Breaker', () => {

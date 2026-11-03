@@ -3,6 +3,7 @@
 // Read-only apart from one tiny test program (it prints 2). Never prints the URL or the key.
 import * as dotenv from 'dotenv';
 import { ALLOWED_LANGUAGE_IDS } from '../src/modules/judge0/judge0.constants';
+import { judge0Headers } from '../src/modules/judge0/judge0.client';
 
 dotenv.config();
 
@@ -21,7 +22,8 @@ if (!url || !key) {
 }
 
 const base = url.replace(/\/+$/, '');
-const headers = { 'Content-Type': 'application/json', 'X-Auth-Token': key };
+// Shared header logic: picks X-Auth-Token or RapidAPI headers automatically from the URL.
+const headers = judge0Headers();
 
 async function main() {
   // 1. Reachable and the X-Auth-Token header is accepted? Which language ids exist?
@@ -30,7 +32,7 @@ async function main() {
   if (!langRes.ok) {
     console.error(
       langRes.status === 401 || langRes.status === 403
-        ? 'FAIL: the server rejected the key. It may not use X-Auth-Token (e.g. RapidAPI uses other headers).'
+        ? 'FAIL: the server rejected the key (401/403). On RapidAPI, make sure you have Subscribed to the Basic plan.'
         : 'FAIL: unexpected response from the languages endpoint.'
     );
     process.exit(1);

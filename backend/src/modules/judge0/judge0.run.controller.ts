@@ -16,7 +16,8 @@ export const runCode = async (req: Request, res: Response, next: NextFunction) =
     }
     const { code, languageId, stdin } = parsed.data;
     const data = await runCodeService(req.user!, req.params.testId, code, languageId, stdin);
-    res.status(202).json({ data });
+    // Sync mode returns the finished result (200); async mode returns a pending run to poll (202).
+    res.status(data.status === 'DONE' ? 200 : 202).json({ data });
   } catch (error) {
     next(error);
   }

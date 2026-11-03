@@ -10,6 +10,8 @@ import * as client from '../../modules/judge0/judge0.client';
 
 vi.mock('../../modules/judge0/judge0.client', () => ({
   submitCodeToJudge0: vi.fn(),
+  runCodeToJudge0Sync: vi.fn(),
+  getJudge0Submission: vi.fn(),
 }));
 
 const COLLEGE = 'college-A';
@@ -140,16 +142,16 @@ describe('Judge0: running code for a test', () => {
     expect(await runs()).toHaveLength(0);
   });
 
-  it('answers 503 and creates nothing when code execution is not configured', async () => {
-    const original = env.JUDGE0_CALLBACK_BASE_URL;
-    env.JUDGE0_CALLBACK_BASE_URL = undefined;
+  it('answers 503 and creates nothing when Judge0 itself is not configured', async () => {
+    const original = env.JUDGE0_API_KEY;
+    env.JUDGE0_API_KEY = undefined;
     try {
       const res = await run('s1', 'test-open');
       expect(res.status).toBe(503);
       expect(submit).not.toHaveBeenCalled();
       expect(await runs()).toHaveLength(0);
     } finally {
-      env.JUDGE0_CALLBACK_BASE_URL = original;
+      env.JUDGE0_API_KEY = original;
     }
   });
 
@@ -168,5 +170,73 @@ describe('Judge0: running code for a test', () => {
     for (let i = 0; i < 11; i++) statuses.push((await run('s-rate', 'test-open')).status);
     expect(statuses.slice(0, 10).every((s) => s === 202)).toBe(true);
     expect(statuses[10]).toBe(429);
+  });
+});
+
+describe('Judge0: synchronous mode (no public callback URL)', () => {
+  const db = admin.firestore();
+  const runSync = vi.mocked(client.runCodeToJudge0Sync);
+  const submit = vi.mocked(client.submitCodeToJudge0);
+  const saved = { url: env.JUDGE0_API_URL, key: env.JUDGE0_API_KEY, tok: env.JUDGE0_CALLBACK_TOKEN, base: env.JUDGE0_CALLBACK_BASE_URL };
+
+  beforeAll(() => {
+    env.JUDGE0_API_URL = 'https://judge0-ce.p.rapidapi.com';
+    env.JUDGE0_API_KEY = 'rapid-key';
+    // No callback token/base URL -> the service runs synchronously.
+    env.JUDGE0_CALLBACK_TOKEN = undefined;
+    env.JUDGE0_CALLBACK_BASE_URL = undefined;
+  });
+  afterAll(() => {
+    env.JUDGE0_API_URL = saved.url; env.JUDGE0_API_KEY = saved.key;
+    env.JUDGE0_CALLBACK_TOKEN = saved.tok; env.JUDGE0_CALLBACK_BASE_URL = saved.base;
+  });
+
+  beforeEach(async () => {
+    runSync.mockReset();
+    submit.mockReset();
+    await db.collection(COLLECTIONS.CLASSROOMS).doc('class-1').set({ collegeId: COLLEGE, students: ['s1'] });
+    const now = Date.now();
+    await db.collection(COLLECTIONS.TESTS).doc('test-open').set({
+      classroomId: 'class-1', collegeId: COLLEGE, teacherId: 'teacher-1',
+      startTime: admin.firestore.Timestamp.fromDate(new Date(now - 3_600_000)),
+      endTime: admin.firestore.Timestamp.fromDate(new Date(now + 3_600_000)),
+    });
+  });
+
+  const runReq = (body: object = { code: 'print(1)', languageId: 71 }) =>
+    request(app).post('/api/judge0/tests/test-open/run').set('Authorization', `Bearer ${tokenFor('s1')}`).send(body);
+  const runs = async () => (await db.collection(COLLECTIONS.JUDGE0_RUNS).get()).docs;
+
+  it('returns the finished result inline (200) and stores the run as DONE, without using the callback path', async () => {
+    runSync.mockResolvedValue({ status: { id: 3, description: 'Accepted' }, stdout: '1\n', stderr: null, time: '0.01', memory: 800, token: 'jt-sync' });
+    const res = await runReq();
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('DONE');
+    expect(res.body.data.result.statusId).toBe(3);
+    expect(res.body.data.result.stdout).toBe('1\n');
+    expect(submit).not.toHaveBeenCalled();
+
+    const [doc] = await runs();
+    expect(doc.data().status).toBe('DONE');
+    expect(doc.data().result.stdout).toBe('1\n');
+    expect(doc.data().judge0Token).toBe('jt-sync');
+  });
+
+  it('the stored result is readable by its owner via GET /runs/:runId', async () => {
+    runSync.mockResolvedValue({ status: { id: 6, description: 'Compilation Error' }, stdout: null, compile_output: 'boom', token: 't' });
+    const runId = (await runReq({ code: 'bad', languageId: 71 })).body.data.runId;
+    const got = await request(app).get(`/api/judge0/runs/${runId}`).set('Authorization', `Bearer ${tokenFor('s1')}`);
+    expect(got.status).toBe(200);
+    expect(got.body.data.result.compileOutput).toBe('boom');
+  });
+
+  it('when Judge0 fails: 502 with a generic message and the run is closed as FAILED', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    runSync.mockRejectedValue(new Error('connect ECONNREFUSED 10.9.9.9 secret-detail'));
+    const res = await runReq();
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(res.body)).not.toContain('10.9.9.9');
+    const [doc] = await runs();
+    expect(doc.data().status).toBe('FAILED');
   });
 });

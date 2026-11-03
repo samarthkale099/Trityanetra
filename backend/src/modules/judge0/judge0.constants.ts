@@ -5,6 +5,9 @@ export const JUDGE0_BOUNDS = {
   HTTP_TIMEOUT_MS: 10_000,
   CPU_TIME_LIMIT_S: 5,
   MEMORY_LIMIT_KB: 128_000,
+  // Synchronous mode: how long to wait for a result, and how often to poll when wait=true is not honored.
+  SYNC_MAX_WAIT_MS: 15_000,
+  SYNC_POLL_INTERVAL_MS: 1_500,
 } as const;
 
 // Judge0 CE language ids that students may run. ASSUMPTION: these match the ids on the team's Judge0
