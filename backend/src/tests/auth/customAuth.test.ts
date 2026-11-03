@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express, { Request, Response } from 'express';
 import { app } from '../../app'; // The main app to test /api/auth/register and /login
+import { markEmailVerified } from '../helpers/auth';
 import * as admin from 'firebase-admin';
 import { COLLECTIONS } from '../../db/collections';
 import { Role } from '../../types/roles';
@@ -38,7 +39,7 @@ describe('Custom JWT Auth Module', () => {
         .send(payload);
 
       expect(res.status).toBe(201);
-      expect(res.body.message).toBe('User registered successfully');
+      expect(res.body.message).toMatch(/verif/i);
       expect(res.body.user).toBeDefined();
       expect(res.body.user.email).toBe(payload.email);
       expect(res.body.user.passwordHash).toBeUndefined();
@@ -127,8 +128,9 @@ describe('Custom JWT Auth Module', () => {
         collegeId: 'college-1'
       };
 
-      // Register first
+      // Register, then verify (verification itself is covered in emailVerification.test.ts)
       await request(app).post('/api/auth/register').send(payload);
+      await markEmailVerified(payload.email);
 
       // Then login
       const res = await request(app)
@@ -192,6 +194,7 @@ describe('Custom JWT Auth Module', () => {
       };
 
       await request(app).post('/api/auth/register').send(payload);
+      await markEmailVerified(payload.email);
 
       const loginRes = await request(app)
         .post('/api/auth/login')

@@ -5,7 +5,7 @@ import { app } from '../../app';
 import { COLLECTIONS } from '../../db/collections';
 import { Role } from '../../types/roles';
 import { randomUUID } from 'crypto';
-import { generateToken } from '../helpers/auth';
+import { generateToken, markEmailVerified } from '../helpers/auth';
 import jwt from 'jsonwebtoken';
 
 describe('Auth Module - Assign Role', () => {
@@ -215,6 +215,7 @@ describe('Auth Module - Assign Role', () => {
       });
       expect(reg.status).toBe(201);
       const uid = reg.body.user.uid;
+      await markEmailVerified('new.teacher@x.com');
 
       const login1 = await request(app).post('/api/auth/login').send({ email: 'new.teacher@x.com', password: 'password123' });
       expect((jwt.decode(login1.body.token) as any).role).toBe(Role.STUDENT);

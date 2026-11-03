@@ -48,8 +48,9 @@ redis/ docker-compose.yml
 ```
 
 ## Known gaps
+- Email verification: new signups must verify their email before login (link valid 24h). Set `SMTP_URL` to send real mail; otherwise the link is printed to the backend console (dev). Accounts predating this feature are grandfathered in.
 - Judge0: callbacks are authenticated by a secret in the URL (`/api/judge0/callback/<JUDGE0_CALLBACK_TOKEN>`), with replay/state checks against `judge0Runs`. Students run code via `POST /api/judge0/tests/:testId/run` (member of the test's classroom, inside the window, rate limited); the run record is created before Judge0 is called and its id rides in the callback URL. Not yet tested against a real Judge0: assumes Judge0 CE with `X-Auth-Token`, the language ids in `judge0.constants.ts`, and a public `JUDGE0_CALLBACK_BASE_URL`.
 - `answers` shape for coding questions is not yet agreed with the frontend.
 - First admin/college bootstrap is manual (`scripts/bootstrap-admin.ts`, then `POST /api/colleges`).
 - Maximum class size for plagiarism checks (currently capped at 50) needs confirming.
-- Redis-backed limiters have been unit-tested with a fake Redis only; a live smoke test is pending.
+- Redis: rate limiters and the plagiarism queue are verified against a real Redis via `scripts/redis-smoke.ts`.

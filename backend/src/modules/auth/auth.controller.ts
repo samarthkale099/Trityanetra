@@ -7,6 +7,7 @@ import { env } from '../../config/env';
 import { db } from '../../db/firestore';
 import { COLLECTIONS } from '../../db/collections';
 import { findCollegeByEmail } from '../college/college.service';
+import { issueVerification, verifyEmailToken, resendVerification } from './emailVerification.service';
 
 export const assignUserRole = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -74,14 +75,22 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
       passwordHash: hashedPassword,
       role,
       collegeId: resolvedCollegeId,
+      emailVerified: false,
       createdAt: new Date(),
     };
 
     await newUserRef.set(userData);
 
+    // Email the verification link. A failure here must not fail registration (the user can resend).
+    try {
+      await issueVerification(newUserRef.id, userData.email);
+    } catch (mailErr) {
+      console.error('Failed to send verification email:', (mailErr as Error).message);
+    }
+
     // Return 201 without passwordHash
     res.status(201).json({
-      message: 'User registered successfully',
+      message: 'Registered. Check your email for a verification link before logging in.',
       user: {
         uid: newUserRef.id,
         email: userData.email,
@@ -118,6 +127,12 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Accounts created with email verification must verify first. Accounts predating this feature have no
+    // emailVerified field and are allowed through (grandfathered), so admin bootstrap and older users work.
+    if (userData.emailVerified === false) {
+      return res.status(403).json({ error: 'Please verify your email before logging in', code: 'EMAIL_NOT_VERIFIED' });
+    }
+
     // Issue JWT
     const payload = {
       uid: userDoc.id,
@@ -134,3 +149,22 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
   }
 };
 
+export const verifyEmail = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = (req.method === 'GET' ? req.query.token : req.body.token);
+    await verifyEmailToken(token);
+    res.status(200).json({ message: 'Email verified. You can now log in.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resendVerificationEmail = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await resendVerification(req.body.email);
+    // Always generic, so the response never reveals whether an account exists.
+    res.status(200).json({ message: 'If that account exists and is unverified, a new link has been sent.' });
+  } catch (error) {
+    next(error);
+  }
+};

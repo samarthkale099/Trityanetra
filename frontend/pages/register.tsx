@@ -8,6 +8,7 @@ export default function RegisterPage() {
   const [collegeId, setCollegeId] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -24,12 +25,27 @@ export default function RegisterPage() {
         setError(data.error || 'Registration failed');
         return;
       }
-      window.location.href = '/login';
+      setDone(true);
     } catch {
       setError('Could not reach the server');
     } finally {
       setBusy(false);
     }
+  }
+
+  if (done) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="w-full max-w-sm bg-white p-6 rounded shadow space-y-3 text-center">
+          <h1 className="text-xl font-semibold">Check your email</h1>
+          <p className="text-sm text-gray-600">
+            We sent a verification link to <span className="font-medium">{email}</span>. Open it to activate your
+            account, then log in.
+          </p>
+          <Link href="/login" className="inline-block bg-blue-600 text-white rounded p-2 w-full">Go to login</Link>
+        </div>
+      </main>
+    );
   }
 
   return (
