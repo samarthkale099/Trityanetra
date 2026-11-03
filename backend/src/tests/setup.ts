@@ -23,6 +23,7 @@ process.env.JUDGE0_CALLBACK_BASE_URL = '';
 process.env.PISTON_API_URL = '';
 process.env.PAIZA_API_URL = '';
 process.env.PAIZA_API_KEY = '';
+process.env.MAX_PLAGIARISM_BATCH_SIZE = '50';
 
 import { vi } from 'vitest';
 

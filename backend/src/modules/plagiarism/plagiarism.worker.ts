@@ -6,10 +6,11 @@ import { COLLECTIONS } from '../../db/collections';
 import { PlagiarismStatus } from './plagiarism.service';
 import { PlagiarismResponseSchema } from './plagiarism.schema';
 
-// The AST engine rejects batches above this size with a 422 (MAX_BATCH_SIZE, config.py:24 in the engine).
-// Splitting into chunks is NOT a safe workaround: pairs that straddle chunks would silently never be compared.
-// Above the limit we fail loudly instead of truncating or chunking.
-export const MAX_AST_BATCH_SIZE = 50;
+// Maximum submissions per plagiarism check. MUST equal the AST engine's MAX_BATCH_SIZE (config.py), which the
+// engine enforces with a 422. Set MAX_PLAGIARISM_BATCH_SIZE to track the engine without a code change.
+// Splitting into chunks is NOT a safe workaround: pairs that straddle chunks would silently never be compared,
+// so above the limit we fail loudly instead of truncating or chunking.
+export const MAX_AST_BATCH_SIZE = Number(process.env.MAX_PLAGIARISM_BATCH_SIZE) || 50;
 
 export const plagiarismProcessor = async (job: Job) => {
   const { testId } = job.data;
