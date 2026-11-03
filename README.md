@@ -5,6 +5,7 @@ Secure, role-based online examination platform: colleges, classrooms, timed test
 ## Architecture
 - **Backend** (`/backend`): Node.js / Express / TypeScript. Data in **Firebase Firestore** via `firebase-admin`. Auth is **custom JWT** (bcrypt password hashes, 1-day tokens carrying `uid`, `role`, `collegeId`). All authorization derives from the verified token, never from request bodies.
 - **Frontend** (`/frontend`): Next.js 14 (Pages Router) + Tailwind. Calls relative `/api/...` URLs, which `next.config.js` proxies to the backend (default `http://127.0.0.1:5001`, override with `BACKEND_URL`). Pages: `/login`, `/register` (students only), student / teacher / college pages.
+- **Code execution:** Piston (free public API, default) or Judge0; see `CODE_EXECUTION_PROVIDER`.
 - **AST engine** (`/ast-engine`): Python service that scores code similarity between submissions. Called by the backend plagiarism worker with the `X-Internal-Secret` header; max 50 submissions per check.
 - **Redis**: used only for the plagiarism job queue (BullMQ) and rate-limit counters (`rl:monitor:`, `rl:judge0:` namespaces). Data stays in Firestore. Start locally with `docker compose up -d redis`.
 
@@ -49,7 +50,7 @@ redis/ docker-compose.yml
 
 ## Known gaps
 - Email verification: new signups must verify their email before login (link valid 24h). Set `SMTP_URL` to send real mail; otherwise the link is printed to the backend console (dev). Accounts predating this feature are grandfathered in.
-- Judge0: callbacks are authenticated by a secret in the URL (`/api/judge0/callback/<JUDGE0_CALLBACK_TOKEN>`), with replay/state checks against `judge0Runs`. Students run code via `POST /api/judge0/tests/:testId/run` (member of the test's classroom, inside the window, rate limited); the run record is created before Judge0 is called and its id rides in the callback URL. Two execution modes: synchronous (default, works on localhost - the server waits for the result) and asynchronous callback (set `JUDGE0_CALLBACK_BASE_URL` + `JUDGE0_CALLBACK_TOKEN` when the backend is publicly reachable). Works with self-hosted Judge0 CE or RapidAPI's Judge0 CE (key header auto-detected). Verify a real server with `scripts/judge0-smoke.ts`.
+- Judge0: callbacks are authenticated by a secret in the URL (`/api/judge0/callback/<JUDGE0_CALLBACK_TOKEN>`), with replay/state checks against `judge0Runs`. Students run code via `POST /api/judge0/tests/:testId/run` (member of the test's classroom, inside the window, rate limited); the run record is created before Judge0 is called and its id rides in the callback URL. Two providers, chosen by `CODE_EXECUTION_PROVIDER`: **Piston** (default, free, no key, public API) or **Judge0**. Both run synchronously on localhost (the server waits for the result); Judge0 also supports an async callback mode when the backend is publicly reachable (`JUDGE0_CALLBACK_BASE_URL` + `JUDGE0_CALLBACK_TOKEN`). Judge0 works self-hosted or via RapidAPI (key header auto-detected). Verify live: `scripts/piston-smoke.ts` (free) or `scripts/judge0-smoke.ts`.
 - `answers` shape for coding questions is not yet agreed with the frontend.
 - First admin/college bootstrap is manual (`scripts/bootstrap-admin.ts`, then `POST /api/colleges`).
 - Maximum class size for plagiarism checks (currently capped at 50) needs confirming.

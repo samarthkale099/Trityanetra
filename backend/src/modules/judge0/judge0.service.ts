@@ -4,6 +4,7 @@ import { db } from '../../db/firestore';
 import { env } from '../../config/env';
 import { Judge0CallbackBody } from './judge0.callback.schema';
 import { Judge0RawResult } from './judge0.client';
+import { runCodeOnPiston } from './piston.client';
 import { ALLOWED_LANGUAGE_IDS, JUDGE0_BOUNDS } from './judge0.constants';
 
 const httpError = (status: number, message: string) => {
@@ -35,12 +36,18 @@ export const runCodeService = async (
     throw httpError(400, 'stdin is too large');
   }
 
-  // Judge0 itself must be configured. The callback URL/token are only needed for async mode.
-  if (!env.JUDGE0_API_URL || !env.JUDGE0_API_KEY) {
+  // Pick the engine: explicit CODE_EXECUTION_PROVIDER wins; otherwise Judge0 if it is configured, else Piston.
+  const configured = (env.CODE_EXECUTION_PROVIDER || '').toLowerCase();
+  const provider = configured === 'piston' || configured === 'judge0'
+    ? configured
+    : (env.JUDGE0_API_URL && env.JUDGE0_API_KEY ? 'judge0' : 'piston');
+
+  // Judge0 needs an API key/url; Piston's public API needs nothing.
+  if (provider === 'judge0' && (!env.JUDGE0_API_URL || !env.JUDGE0_API_KEY)) {
     throw httpError(503, 'Code execution is not configured');
   }
-  // Async callback mode needs both the public base URL and the shared token; without them we run synchronously.
-  const asyncMode = !!(env.JUDGE0_CALLBACK_BASE_URL && env.JUDGE0_CALLBACK_TOKEN);
+  // Async callback is Judge0-only and needs a public base URL + shared token; otherwise we run synchronously.
+  const asyncMode = provider === 'judge0' && !!(env.JUDGE0_CALLBACK_BASE_URL && env.JUDGE0_CALLBACK_TOKEN);
 
   const ref = db.collection(COLLECTIONS.JUDGE0_RUNS).doc();
   await ref.set({
@@ -63,9 +70,11 @@ export const runCodeService = async (
     }
 
     // Synchronous: wait for the result inline (works on localhost, no public URL needed).
-    const raw: Judge0RawResult = await runSyncWithBreaker(code, languageId, { stdin });
+    const raw: Judge0RawResult = provider === 'piston'
+      ? await runCodeOnPiston(languageId, code, stdin)
+      : await runSyncWithBreaker(code, languageId, { stdin });
     const result = buildResult(raw);
-    await ref.update({ status: 'DONE', result, judge0Token: raw.token ?? null, completedAt: new Date() });
+    await ref.update({ status: 'DONE', result, provider, judge0Token: raw.token ?? null, completedAt: new Date() });
     return { runId: ref.id, status: 'DONE', result };
   } catch (error) {
     // The run failed, so no result is coming: close it so it is not left PENDING forever.

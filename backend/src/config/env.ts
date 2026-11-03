@@ -21,6 +21,10 @@ export const env = {
   JUDGE0_API_URL: process.env.JUDGE0_API_URL,
   JUDGE0_API_KEY: process.env.JUDGE0_API_KEY,
   JUDGE0_CALLBACK_TOKEN: process.env.JUDGE0_CALLBACK_TOKEN,
+  // Which engine runs student code: 'piston' (free, no key, default) or 'judge0'.
+  CODE_EXECUTION_PROVIDER: process.env.CODE_EXECUTION_PROVIDER,
+  // Piston API base (default is the free public instance).
+  PISTON_API_URL: process.env.PISTON_API_URL,
   // Public base URL Judge0 can reach us at, e.g. https://api.example.com (no trailing slash needed).
   JUDGE0_CALLBACK_BASE_URL: process.env.JUDGE0_CALLBACK_BASE_URL,
   // Public URL of the frontend, used to build email-verification links. Defaults to localhost in dev.

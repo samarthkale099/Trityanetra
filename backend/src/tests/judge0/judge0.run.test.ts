@@ -142,8 +142,11 @@ describe('Judge0: running code for a test', () => {
     expect(await runs()).toHaveLength(0);
   });
 
-  it('answers 503 and creates nothing when Judge0 itself is not configured', async () => {
-    const original = env.JUDGE0_API_KEY;
+  it('answers 503 and creates nothing when the Judge0 provider is selected but not configured', async () => {
+    const originalKey = env.JUDGE0_API_KEY;
+    const originalProvider = env.CODE_EXECUTION_PROVIDER;
+    // Force Judge0 (so it does not silently fall back to Piston) with no key -> not configured.
+    env.CODE_EXECUTION_PROVIDER = 'judge0';
     env.JUDGE0_API_KEY = undefined;
     try {
       const res = await run('s1', 'test-open');
@@ -151,7 +154,8 @@ describe('Judge0: running code for a test', () => {
       expect(submit).not.toHaveBeenCalled();
       expect(await runs()).toHaveLength(0);
     } finally {
-      env.JUDGE0_API_KEY = original;
+      env.JUDGE0_API_KEY = originalKey;
+      env.CODE_EXECUTION_PROVIDER = originalProvider;
     }
   });
 
