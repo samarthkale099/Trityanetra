@@ -19,7 +19,7 @@ import { SubmitBar } from '@/features/exam/SubmitBar'
 import { useTabFocusMonitor } from '@/features/exam/useTabFocusMonitor'
 import { useDevToolsDetector } from '@/features/exam/useDevToolsDetector'
 import { usePasteBlock } from '@/features/exam/usePasteBlock'
-import { useDraftAutosave } from '@/features/exam/useDraftAutosave'
+import { clearDraftFor, readDraftFor, useDraftAutosave } from '@/features/exam/useDraftAutosave'
 import { useAuth } from '@/app/providers/AuthProvider'
 import { useTheme } from '@/app/providers/ThemeProvider'
 import { useNow } from '@/shared/hooks/useNow'
@@ -104,6 +104,29 @@ export function ExamPage() {
   const currentQuestion: TestDetail['questions'][number] | undefined = questions[activeQuestion]
   const starterCode = currentQuestion?.starterCode ?? ''
 
+  // Each question's latest code this session. The editor only holds the open
+  // question, so without this a multi-question exam would submit one answer.
+  const answersRef = useRef<Record<string, string>>({})
+  const onCodeChange = useCallback(
+    (value: string) => {
+      setCode(value)
+      if (currentQuestion) answersRef.current[currentQuestion.id] = value
+    },
+    [currentQuestion],
+  )
+  /** Every question's code: typed this session, else its saved draft, else the starter. */
+  const getAnswers = useCallback((): Record<string, string> => {
+    const all: Record<string, string> = {}
+    for (const question of questions) {
+      all[question.id] =
+        answersRef.current[question.id] ??
+        (user && testId ? readDraftFor({ testId, userId: user.uid, questionId: question.id }) : null) ??
+        question.starterCode ??
+        ''
+    }
+    return all
+  }, [questions, user, testId])
+
   const draft = useDraftAutosave(
     user && testId && currentQuestion ? { testId, userId: user.uid, questionId: currentQuestion.id } : null,
     code,
@@ -121,7 +144,9 @@ export function ExamPage() {
     if (seededRef.current === seedKey) return
     seededRef.current = seedKey
     const restored = draft.restored
-    setCode(restored !== null ? restored : currentQuestion.starterCode)
+    // Coming back to a question this session restores what was typed, which is
+    // newer than the debounced draft.
+    setCode(answersRef.current[currentQuestion.id] ?? (restored !== null ? restored : currentQuestion.starterCode))
   }, [currentQuestion, draft.restored, testId])
 
   const raiseViolation = useCallback((kind: ViolationKind) => {
@@ -199,13 +224,18 @@ export function ExamPage() {
   const onSubmitted = useCallback(
     (submissionId: string) => {
       setSubmitted(true)
-      // The draft has served its purpose and must not be restored next time.
+      // The drafts have served their purpose and must not be restored next time.
       draft.clear()
+      if (user && testId) {
+        for (const question of test?.questions ?? []) {
+          clearDraftFor({ testId, userId: user.uid, questionId: question.id })
+        }
+      }
       void queryClient.invalidateQueries({ queryKey: ['test', 'lobby', testId] })
       void queryClient.invalidateQueries({ queryKey: ['tests'] })
       toast.success('Exam submitted', { description: `Reference ${submissionId}` })
     },
-    [draft, queryClient, testId],
+    [draft, queryClient, testId, user, test?.questions],
   )
 
   /*
@@ -488,7 +518,7 @@ export function ExamPage() {
               <div className="min-h-[16rem] flex-1 lg:min-h-0">
                 <CodeEditor
                   value={code}
-                  onChange={setCode}
+                  onChange={onCodeChange}
                   language={test.language}
                   theme={theme}
                   readOnly={expired || submitted}
@@ -540,6 +570,7 @@ export function ExamPage() {
                   context={context}
                   code={code}
                   idempotencyKey={idempotencyKeyRef.current}
+                  getAnswers={getAnswers}
                   locked={submitted}
                   onSubmitted={onSubmitted}
                   onDone={() => navigate(`/app/tests/${encodeURIComponent(testId)}/lobby`, { replace: true })}

@@ -36,6 +36,7 @@ export default defineConfig({
     command: `npx vite build --mode e2e && npx vite preview --mode e2e --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,
-    timeout: 120_000,
+    // A full build can take over two minutes on a busy laptop.
+    timeout: 300_000,
   },
 })

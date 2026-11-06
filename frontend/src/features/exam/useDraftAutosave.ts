@@ -77,6 +77,16 @@ interface PendingDraft {
   initialValue: string
 }
 
+/** Reads one question's saved draft without the hook (e.g. at submit time). */
+export function readDraftFor(key: DraftKey): string | null {
+  return readDraft(storageKey(key))
+}
+
+/** Removes one question's saved draft (after a successful submit). */
+export function clearDraftFor(key: DraftKey): void {
+  removeDraft(storageKey(key))
+}
+
 export function useDraftAutosave(
   key: DraftKey | null,
   value: string,

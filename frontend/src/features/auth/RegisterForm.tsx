@@ -65,14 +65,10 @@ export function RegisterForm() {
         displayName: values.displayName,
         collegeDomain: deriveCollegeDomain(values.email),
       })
+      // Null: the account exists but the server never confirmed the session.
+      if (!profile) throw new Error('Your account was created, but we could not load it from the server. Try signing in.')
       toast.success('Account created', { description: 'You are signed in as a student.' })
-      // Null means the backend has not confirmed the role yet; the route guard
-      // redirects as soon as it does, so no destination is guessed here.
-      if (profile) navigate(roleHomePath(profile.role), { replace: true })
-      else {
-        inFlight.current = false
-        setSubmitting(false)
-      }
+      navigate(roleHomePath(profile.role), { replace: true })
     } catch (error) {
       const message = describeAuthError(error)
       setFormError(message)

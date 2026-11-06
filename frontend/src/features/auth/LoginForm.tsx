@@ -57,11 +57,10 @@ export function LoginForm() {
     try {
       // Resolves with the server-assigned profile, not a client-side guess.
       const profile = await signIn(values.email, values.password)
+      // Null: the server never confirmed who this is, even after retries.
+      if (!profile) throw new Error('We signed you in but could not load your account from the server. Check your connection and try again.')
       toast.success('Signed in')
-      // Null means the backend has not confirmed the role yet. Guessing a
-      // destination here would use a placeholder, so leave the navigation to
-      // the route guard, which redirects the moment the real role lands.
-      if (profile) navigate(roleHomePath(profile.role), { replace: true })
+      navigate(roleHomePath(profile.role), { replace: true })
     } catch (error) {
       const message = describeAuthError(error)
       setFormError(message)

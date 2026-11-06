@@ -126,7 +126,7 @@ describe('authApi (Firebase driver bridge)', () => {
       unsubscribe()
     })
 
-    it('keeps the session when the backend is unreachable, so routing is not blocked', async () => {
+    it('never settles on a guessed role when the backend stays unreachable', async () => {
       server.use(mswHttp.get(API.me, () => HttpResponse.error()))
       const handle = installFakeAuth({ accounts: [ACCOUNT] })
       setAuthDriver(handle.driver)
@@ -136,13 +136,13 @@ describe('authApi (Firebase driver bridge)', () => {
 
       await handle.driver.signIn(ACCOUNT.email, ACCOUNT.password)
       await flushAuth()
-      // Settles as authoritative on the placeholder: waiting for a profile that
-      // is never coming would strand the user on a spinner.
-      await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(3))
+      // After the retries the result is "no session", not the placeholder:
+      // its STUDENT role is a guess and would show a teacher the wrong app.
+      await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(3), { timeout: 5000 })
 
-      // Anonymous only before sign-in; the session is never revoked by a
-      // failed exchange, which would dump the user back on the login page.
-      expect(seen).toEqual([null, { role: 'STUDENT' }, { role: 'STUDENT' }])
+      // The middle entry is the optimistic placeholder, which AuthProvider
+      // never renders (it is not authoritative).
+      expect(seen).toEqual([null, { role: 'STUDENT' }, null])
       unsubscribe()
     })
 

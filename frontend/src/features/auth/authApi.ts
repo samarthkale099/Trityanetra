@@ -103,6 +103,26 @@ async function openSession(idToken: string): Promise<UserProfile> {
   return readProfile(payload)
 }
 
+/** Waits between profile attempts: a dropped request deserves a second try. */
+export const SESSION_RETRY_DELAYS_MS = [500, 1500]
+
+/**
+ * `openSession` with retries for network and server errors. A 4xx answer is
+ * final (the server has spoken), so it is not retried.
+ */
+async function openSessionWithRetry(idToken: string): Promise<UserProfile> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await openSession(idToken)
+    } catch (error) {
+      const status = (error as { status?: unknown })?.status
+      const final = typeof status === 'number' && status >= 400 && status < 500
+      if (final || attempt >= SESSION_RETRY_DELAYS_MS.length) throw error
+      await new Promise((resolve) => setTimeout(resolve, SESSION_RETRY_DELAYS_MS[attempt]))
+    }
+  }
+}
+
 type RawProfile = Partial<UserProfile> & { uid: string; email: string }
 type ProfilePayload = { user: RawProfile } | RawProfile
 
@@ -176,7 +196,7 @@ export const authApi = {
 
           let exchange = exchanged.get(idToken)
           if (!exchange) {
-            exchange = openSession(idToken).catch(() => null)
+            exchange = openSessionWithRetry(idToken).catch(() => null)
             exchanged.set(idToken, exchange)
             // Only the current token is worth remembering; older ones can never
             // be handed out again, so there is no reason to grow the map.
@@ -192,10 +212,11 @@ export const authApi = {
           onChange({ idToken, profile: profileFor(user), authoritative: false })
           const profile = await exchange
           if (!active) return
-          // If the exchange failed, the placeholder stands but is marked
-          // authoritative anyway: waiting for a profile that is never coming
-          // would leave the sign-in button spinning until it times out.
-          onChange({ idToken, profile: profile ?? profileFor(user), authoritative: true })
+          // If the profile still cannot be loaded, report "no session" rather
+          // than settling on the placeholder: its role is a guess, and a
+          // teacher shown the student screens is worse than a clear error.
+          // The token is kept, so a reload or a fresh sign-in tries again.
+          onChange(profile ? { idToken, profile, authoritative: true } : null)
         })
         .catch(() => {
           if (active) onChange(null)

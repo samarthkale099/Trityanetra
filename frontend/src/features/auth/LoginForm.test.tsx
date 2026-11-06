@@ -162,7 +162,9 @@ describe('LoginForm', () => {
   it('disables the fields and shows a busy state until the server confirms the session', async () => {
     server.use(
       mswHttp.get(API.me, async () => {
-        await new Promise((resolve) => setTimeout(resolve, 150))
+        // Long enough that a busy machine cannot finish the round trip before
+        // the assertions below run.
+        await new Promise((resolve) => setTimeout(resolve, 1000))
         return HttpResponse.json({ user: makeProfile() })
       }),
     )
@@ -181,7 +183,7 @@ describe('LoginForm', () => {
     expect(screen.getByLabelText('Password')).toBeDisabled()
   })
 
-  it('does not hang when the session exchange fails, and still lands on the role home', async () => {
+  it('does not hang when the account cannot be loaded, and says so instead of guessing a role', async () => {
     server.use(mswHttp.get(API.me, () => HttpResponse.error()))
     const user = userEvent.setup()
     renderForm()
@@ -190,8 +192,15 @@ describe('LoginForm', () => {
     await user.type(screen.getByLabelText('Password'), 'secret123')
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
-    // The placeholder role is used, but the user must not be stranded.
-    await waitFor(() => expect(screen.getByTestId('pathname'))        .toHaveTextContent('/app/student'))
+    // Not stranded on a spinner, and not sent to a guessed (student) home.
+    await waitFor(
+      () => {
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not load your account/i)
+        expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+      },
+      { timeout: 6000 },
+    )
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/login')
   })
 
   it('shows an accessible inline error for wrong credentials and stays put', async () => {

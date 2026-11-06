@@ -133,6 +133,23 @@ test.describe('teacher classroom flow', () => {
     await expect(page.getByRole('heading', { name: 'Sorting and searching' })).toBeVisible()
   })
 
+  test('stays on the teacher page after a reload, not the student home', async ({ page }) => {
+    await signInAsTeacher(page)
+    await page.goto(`/app/classrooms/${SEEDED_CLASSROOM_ID}`)
+    await expect(page.getByRole('heading', { name: 'CS 204 Algorithms' })).toBeVisible()
+
+    // Regression: the restored session briefly carried a placeholder STUDENT
+    // role, and the route guard sent the teacher to /app/student for good.
+    // A slow profile answer gives the guard time to act on that placeholder.
+    await page.route('**/api/auth/me', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      await route.fallback()
+    })
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'CS 204 Algorithms' })).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/app/classrooms/${SEEDED_CLASSROOM_ID}$`))
+  })
+
   test('builds a test and finds it on the classroom page', async ({ page }) => {
     await signInAsTeacher(page)
     await page.goto(`/app/classrooms/${SEEDED_CLASSROOM_ID}/tests/new`)

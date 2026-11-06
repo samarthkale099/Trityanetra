@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { examApi } from './examApi'
+import { answersPayload, examApi } from './examApi'
 import {
   clearMonitorQueue,
   enqueueMonitorEvent,
@@ -259,5 +259,27 @@ describe('examApi against the mock contract', () => {
       const delivered = await flushMonitorQueue({ testId: 'test-live-1', language: 'javascript' })
       expect(delivered).toBe(0)
     })
+  })
+})
+
+describe('answersPayload', () => {
+  it('sends a one-question exam as a single program, the shape plagiarism compares', () => {
+    expect(answersPayload({ language: 'python', code: 'print(1)', answers: { q1: 'print(1)' } })).toEqual({
+      language: 'python',
+      code: 'print(1)',
+    })
+  })
+
+  it('sends every question of a multi-question exam, not just the open one', () => {
+    expect(
+      answersPayload({ language: 'python', code: 'print(2)', answers: { q1: 'print(1)', q2: 'print(2)' } }),
+    ).toEqual({
+      language: 'python',
+      questions: { q1: { code: 'print(1)' }, q2: { code: 'print(2)' } },
+    })
+  })
+
+  it('falls back to the editor contents when no per-question map is given', () => {
+    expect(answersPayload({ language: 'java', code: 'class A {}' })).toEqual({ language: 'java', code: 'class A {}' })
   })
 })

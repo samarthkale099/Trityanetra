@@ -124,6 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const unsubscribe = authApi.subscribe((session) => {
         if (!mounted) return
+        // The optimistic placeholder carries a guessed role. Rendering it let
+        // the route guards act on "STUDENT" and send a reloading teacher to
+        // the student home before the real role arrived. Keep the current
+        // screen (the splash while restoring) until the server confirms.
+        if (session && !session.authoritative) return
         if (session) {
           tokenRef.current = session.idToken
           setToken(session.idToken)

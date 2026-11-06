@@ -55,6 +55,29 @@ export interface SubmitInput {
    * returned Submission stays stable across retries.
    */
   idempotencyKey: string
+  /**
+   * Every question's code, keyed by question id. With more than one question
+   * all of them are sent; otherwise `code` alone is the answer.
+   */
+  answers?: Record<string, string>
+}
+
+const MAX_CODE_CHARS = 200_000
+
+/**
+ * The `answers` body the backend stores. One question: `{ language, code }`,
+ * the shape the plagiarism engine compares. Several: `{ language, questions }`,
+ * so no question's code is dropped.
+ */
+export function answersPayload(input: Pick<SubmitInput, 'code' | 'language' | 'answers'>) {
+  const entries = Object.entries(input.answers ?? {})
+  if (entries.length > 1) {
+    return {
+      language: input.language,
+      questions: Object.fromEntries(entries.map(([id, code]) => [id, { code: sanitizeCode(code, MAX_CODE_CHARS) }])),
+    }
+  }
+  return { language: input.language, code: sanitizeCode(input.code, MAX_CODE_CHARS) }
 }
 
 /* ------------------------------------------------------------------ mapping */
@@ -258,7 +281,7 @@ export const examApi = {
         body: {
           testId,
           // The answer shape the plagiarism engine reads: one program per test.
-          answers: { language: input.language, code: sanitizeCode(input.code, 200_000) },
+          answers: answersPayload(input),
         },
         // A 401 here must not trigger the client's refresh-and-sign-out path: the
         // exam shell re-checks the session itself and shows a re-auth prompt, and a
@@ -289,7 +312,7 @@ export const examApi = {
   /** Saves an in-progress answer server-side (a draft; never final). */
   saveDraft: async (testId: string, input: Omit<SubmitInput, 'idempotencyKey'>): Promise<void> => {
     await http.post<{ message: string }>('/api/submissions/save', {
-      body: { testId, answers: { language: input.language, code: sanitizeCode(input.code, 200_000) } },
+      body: { testId, answers: answersPayload(input) },
       retryOnUnauthorized: false,
     })
   },
