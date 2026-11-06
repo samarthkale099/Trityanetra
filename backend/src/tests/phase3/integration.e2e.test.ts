@@ -310,14 +310,15 @@ describe('Phase 3 integration: enrolment, visibility, exam, grading', () => {
   });
 
   describe('code execution', () => {
-    it('reports 503 while Judge0 is not configured', async () => {
+    it('lets only a student added to the classroom run code for its test', async () => {
+      // Enrolment is the gate for running code too: Kabir is in the college but was never added.
       await db.collection(COLLECTIONS.CLASSROOMS).doc(classroomId).update({ students: [riya.uid] });
       const testId = await seedTest(-5, 60);
       const res = await request(app)
-        .post('/api/judge0/run')
-        .set('Authorization', `Bearer ${tokenFor(riya)}`)
-        .send({ testId, questionId: 'q1', code: 'print(1)', language: 'python' });
-      expect(res.status).toBe(503);
+        .post(`/api/judge0/tests/${testId}/run`)
+        .set('Authorization', `Bearer ${tokenFor(kabir)}`)
+        .send({ code: 'print(1)', languageId: 71 });
+      expect(res.status).toBe(403);
     });
   });
 });

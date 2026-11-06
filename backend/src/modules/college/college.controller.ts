@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { createCollegeService, getCollegesService } from './college.service';
+import { createCollegeService, getCollegesService, setCollegeEmailDomainService } from './college.service';
 
 export const createCollege = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -10,15 +10,7 @@ export const createCollege = async (req: Request, res: Response, next: NextFunct
       return res.status(400).json({ error: 'name and code are required' });
     }
 
-    let domain: string | null = null;
-    if (emailDomain !== undefined && emailDomain !== null && emailDomain !== '') {
-      if (typeof emailDomain !== 'string' || !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(emailDomain.trim())) {
-        return res.status(400).json({ error: 'emailDomain must look like "college.edu"' });
-      }
-      domain = emailDomain.trim().toLowerCase();
-    }
-
-    const data = await createCollegeService(requesterCollegeId, name, code, domain);
+    const data = await createCollegeService(requesterCollegeId, name, code, emailDomain);
     
     res.status(201).json({ message: 'College created successfully', data });
   } catch (error) {
@@ -33,6 +25,19 @@ export const getColleges = async (req: Request, res: Response, next: NextFunctio
     const data = await getCollegesService(requesterCollegeId);
     
     res.status(200).json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const setCollegeEmailDomain = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { emailDomain } = req.body;
+    if (emailDomain !== null && typeof emailDomain !== 'string') {
+      return res.status(400).json({ error: 'emailDomain must be a string, or null to clear it' });
+    }
+    const data = await setCollegeEmailDomainService(req.user?.collegeId, req.params.collegeId, emailDomain);
+    res.status(200).json({ message: 'College email domain updated', data });
   } catch (error) {
     next(error);
   }

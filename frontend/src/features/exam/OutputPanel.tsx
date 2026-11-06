@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { CheckCircle2, ChevronDown, LoaderCircle, Play, Terminal, XCircle } from 'lucide-react'
-import { examApi, type RunCaseResult } from '@/features/exam/examApi'
+import { examApi, MAX_CASES_PER_RUN, type RunCase, type RunCaseResult } from '@/features/exam/examApi'
 import { ApiError } from '@/shared/lib/httpClient'
 import { cn } from '@/shared/lib/cn'
 import { Badge } from '@/shared/components/ui/badge'
@@ -11,7 +11,8 @@ import type { ExamLanguage } from '@/shared/types/classroom'
 
 interface OutputPanelProps {
   testId: string
-  questionId: string
+  /** The question's visible test cases (hidden ones are never run here). */
+  cases: RunCase[]
   code: string
   language: ExamLanguage
   /** True once time is up or the exam is submitted: running is closed too. */
@@ -81,14 +82,14 @@ function CaseResult({ result, index }: { result: RunCaseResult; index: number })
  * pass/fail, time and memory. Hidden test cases are never run here, so they
  * cannot be probed. Running never saves or submits anything.
  */
-export function OutputPanel({ testId, questionId, code, language, disabled = false, className }: OutputPanelProps) {
+export function OutputPanel({ testId, cases, code, language, disabled = false, className }: OutputPanelProps) {
   const [open, setOpen] = useState(false)
   const [useCustom, setUseCustom] = useState(false)
   const [customInput, setCustomInput] = useState('')
 
   const run = useMutation({
     mutationFn: () =>
-      examApi.run(testId, { questionId, code, language, ...(useCustom ? { customInput } : {}) }),
+      examApi.run(testId, { code, language, cases, ...(useCustom ? { customInput } : {}) }),
     onMutate: () => setOpen(true),
   })
 
@@ -166,7 +167,7 @@ export function OutputPanel({ testId, questionId, code, language, disabled = fal
 
           {notConfigured ? (
             <p className="text-sm text-ink-faint">
-              Running code isn't set up on this server yet. Your answer is still saved and submitted normally.
+              Running code isn't available right now. Your answer is still saved and submitted normally.
             </p>
           ) : rateLimited ? (
             <p className="text-sm text-warning">You're running code too often. Wait a moment and try again.</p>
@@ -179,8 +180,9 @@ export function OutputPanel({ testId, questionId, code, language, disabled = fal
             </p>
           ) : results.length === 0 ? (
             <p className="text-sm text-ink-faint">
-              Press Run to try your code on this question's sample test cases. Hidden test cases are only checked
-              after you submit.
+              Press Run to try your code on this question's sample test cases
+              {cases.length > MAX_CASES_PER_RUN ? ` (the first ${MAX_CASES_PER_RUN})` : ''}. Hidden test cases are
+              only checked after you submit.
             </p>
           ) : (
             <ol className="flex flex-col gap-2">

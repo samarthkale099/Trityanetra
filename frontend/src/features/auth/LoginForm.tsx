@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { LoaderCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { loginSchema, type LoginValues } from '@/features/auth/schemas'
+import { ResendVerification } from '@/features/auth/ResendVerification'
 import { describeAuthError } from '@/features/auth/authApi'
 import { useAuth } from '@/app/providers/AuthProvider'
 import { roleHomePath } from '@/shared/lib/roles'
@@ -25,6 +26,8 @@ export function LoginForm() {
   const { signIn } = useAuth()
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // Set when the account exists but has not confirmed its email yet.
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null)
 
   /**
    * The in-flight latch, as a ref rather than as the `submitting` state above.
@@ -64,6 +67,7 @@ export function LoginForm() {
     } catch (error) {
       const message = describeAuthError(error)
       setFormError(message)
+      setUnverifiedEmail((error as { code?: string } | null)?.code === 'auth/email-not-verified' ? values.email : null)
       toast.error('Sign-in failed', { description: message })
     } finally {
       inFlight.current = false
@@ -86,6 +90,7 @@ export function LoginForm() {
             </p>
           ) : null}
         </div>
+        {unverifiedEmail ? <ResendVerification email={unverifiedEmail} /> : null}
 
         <FormField
           control={form.control}

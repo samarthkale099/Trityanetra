@@ -13,6 +13,7 @@ const AppShell = lazy(() => import('@/pages/app/AppShell').then((m) => ({ defaul
 const DashboardPage = lazy(() => import('@/pages/app/Dashboard').then((m) => ({ default: m.DashboardPage })))
 const LoginPage = lazy(() => import('@/pages/auth/Login').then((m) => ({ default: m.LoginPage })))
 const RegisterPage = lazy(() => import('@/pages/auth/Register').then((m) => ({ default: m.RegisterPage })))
+const VerifyEmailPage = lazy(() => import('@/pages/auth/VerifyEmail').then((m) => ({ default: m.VerifyEmailPage })))
 const NotFoundPage = lazy(() => import('@/pages/NotFound').then((m) => ({ default: m.NotFoundPage })))
 
 /* Teacher area. */
@@ -75,6 +76,11 @@ export const routes: RouteObject[] = [
         <RegisterPage />
       </GuestOnly>,
     ),
+  },
+  {
+    // The link in the verification email. Open to anyone: the token is the credential.
+    path: '/verify-email',
+    element: withSuspense(<VerifyEmailPage />),
   },
   {
     path: '/app',

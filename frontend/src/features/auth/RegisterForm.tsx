@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { LoaderCircle } from 'lucide-react'
+import { LoaderCircle, MailCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { registerSchema, type RegisterValues } from '@/features/auth/schemas'
 import { describeAuthError } from '@/features/auth/authApi'
+import { ResendVerification } from '@/features/auth/ResendVerification'
 import { useAuth } from '@/app/providers/AuthProvider'
 import { roleHomePath } from '@/shared/lib/roles'
 import { deriveCollegeDomain } from '@/shared/lib/sanitize'
@@ -28,6 +29,8 @@ export function RegisterForm() {
   const [submitting, setSubmitting] = useState(false)
   const [agreed, setAgreed] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // Set once the account exists and a verification link has been emailed.
+  const [verificationSentTo, setVerificationSentTo] = useState<string | null>(null)
 
   /**
    * The in-flight latch, as a ref rather than as the `submitting` state above.
@@ -70,12 +73,36 @@ export function RegisterForm() {
       toast.success('Account created', { description: 'You are signed in as a student.' })
       navigate(roleHomePath(profile.role), { replace: true })
     } catch (error) {
+      if ((error as { code?: string } | null)?.code === 'auth/verification-sent') {
+        setVerificationSentTo(values.email)
+        inFlight.current = false
+        setSubmitting(false)
+        return
+      }
       const message = describeAuthError(error)
       setFormError(message)
       toast.error('Account could not be created', { description: message })
       inFlight.current = false
       setSubmitting(false)
     }
+  }
+
+  if (verificationSentTo) {
+    return (
+      <div className="flex flex-col gap-4" role="status">
+        <div className="flex items-start gap-3 rounded-lg border border-line bg-surface px-4 py-4">
+          <MailCheck className="mt-0.5 h-5 w-5 shrink-0 text-brand-text" aria-hidden="true" />
+          <div>
+            <p className="font-medium text-ink-strong">Check your email</p>
+            <p className="mt-1 text-sm leading-relaxed text-ink">
+              We sent a confirmation link to <span className="font-medium text-ink-strong">{verificationSentTo}</span>.
+              Open it, then sign in. The link is valid for 24 hours.
+            </p>
+          </div>
+        </div>
+        <ResendVerification email={verificationSentTo} />
+      </div>
+    )
   }
 
   return (

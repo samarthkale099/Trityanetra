@@ -1,41 +1,31 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router } from 'express';
+import { judge0Callback } from './judge0.callback.controller';
+import { runCode, getRun } from './judge0.run.controller';
 import { authenticateJwt } from '../auth/jwt.middleware';
 import { requireRole } from '../../middleware/rbac.middleware';
 import { Role } from '../../types/roles';
 import { testMembershipGuard } from '../test/membership.guard';
 import { testWindowGuard } from '../test/testWindow.guard';
-import { submissionLockGuard } from '../submission/submissionLock.guard';
 import { judge0RateLimiter } from './judge0.rateLimiter';
-import { runForQuestionService } from './judge0.service';
 
 const router = Router();
 
-/**
- * POST /api/judge0/run  { testId, questionId, code, language, customInput? }
- *
- * Student-only, enrolled, inside the test window, before submitting, and rate
- * limited (10/min). Runs against visible test cases only.
- *
- * The Judge0 callback (`judge0.callback.controller.ts`) stays unmounted until
- * the team settles its signing scheme -- see the TODO there.
- */
+// No JWT here on purpose: the caller is Judge0, authenticated by the secret in the URL.
+router.put('/callback/:token', judge0Callback);
+router.post('/callback/:token', judge0Callback);
+
+// A student runs code for a test they belong to, inside the test window, rate limited per user.
 router.post(
-  '/run',
+  '/tests/:testId/run',
   authenticateJwt,
   requireRole([Role.STUDENT]),
   testMembershipGuard,
   testWindowGuard,
-  submissionLockGuard,
   judge0RateLimiter,
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { testId, questionId, code, language, customInput } = req.body ?? {};
-      const data = await runForQuestionService({ testId, questionId, code, language, customInput });
-      res.status(200).json({ data });
-    } catch (error) {
-      next(error);
-    }
-  }
+  runCode
 );
+
+// Poll a run's status/result (only the user who started it can see it).
+router.get('/runs/:runId', authenticateJwt, getRun);
 
 export default router;

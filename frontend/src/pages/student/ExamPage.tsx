@@ -534,7 +534,9 @@ export function ExamPage() {
               {/* Run on the sample test cases; collapsible so the editor keeps its room. */}
               <OutputPanel
                 testId={testId}
-                questionId={currentQuestion?.id ?? `q${activeQuestion + 1}`}
+                cases={(currentQuestion?.testCases ?? [])
+                  .filter((testCase) => !testCase.hidden && testCase.input !== null)
+                  .map((testCase) => ({ id: testCase.id, input: testCase.input ?? '', expected: testCase.expected }))}
                 code={code}
                 language={test.language}
                 disabled={expired || submitted}

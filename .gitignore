@@ -66,3 +66,9 @@ test-results/
 playwright-report/
 # Local tool downloads (e.g. a portable JDK for the Firebase emulator)
 /.tools/
+
+# Firebase emulator debug logs
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+*-debug.log

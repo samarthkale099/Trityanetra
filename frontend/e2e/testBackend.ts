@@ -1163,10 +1163,31 @@ export async function stubTestBackend(page: Page, state: E2EBackendState = seedS
 
   /* ------------------------------------------------------------------ judge0 */
 
-  // Code execution answers 503 until a Judge0 server is configured, as the backend does.
-  await page.route('**/api/judge0/run', (route) =>
-    json(route, { message: 'Code execution is not configured on this server yet' }, 503),
-  )
+  // A stand-in for the code runner (Piston by default on the real backend):
+  // echoes stdin back, so a "print what you read" program passes and anything
+  // else shows a visible mismatch. Runs finish immediately, as in sync mode.
+  let runCounter = 0
+  await page.route('**/api/judge0/tests/*/run', async (route) => {
+    const body = (route.request().postDataJSON() ?? {}) as { code?: string; stdin?: string }
+    if (!body.code) return json(route, { error: 'code (string) and languageId (integer) are required' }, 400)
+    runCounter += 1
+    return json(route, {
+      data: {
+        runId: `run-${runCounter}`,
+        status: 'DONE',
+        result: {
+          statusId: 3,
+          statusDescription: 'Accepted',
+          stdout: `${body.stdin ?? ''}\n`,
+          stderr: null,
+          compileOutput: null,
+          message: null,
+          time: '0.021',
+          memory: 9216,
+        },
+      },
+    })
+  })
 
   return state
 }

@@ -5,7 +5,7 @@ import { Route, Routes, useLocation } from 'react-router-dom'
 import { http as mswHttp, HttpResponse } from 'msw'
 import { server } from '@/tests/msw/server'
 import { API, makeProfile } from '@/tests/msw/handlers'
-import { installFakeAuth } from '@/tests/fakeAuthDriver'
+import { FakeAuthError, installFakeAuth } from '@/tests/fakeAuthDriver'
 import { renderWithProviders } from '@/tests/renderWithProviders'
 import { authApi } from '@/features/auth/authApi'
 import { RegisterForm } from '@/features/auth/RegisterForm'
@@ -52,9 +52,11 @@ async function fillDetails(user: ReturnType<typeof userEvent.setup>) {
 const acceptConsent = (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole('checkbox', { name: 'Accept the classroom code of conduct' }))
 
+let auth: ReturnType<typeof installFakeAuth>
+
 describe('RegisterForm', () => {
   beforeEach(() => {
-    installFakeAuth()
+    auth = installFakeAuth()
     server.use(mswHttp.get(API.me, () => HttpResponse.json({ user: makeProfile() })))
   })
 
@@ -238,5 +240,20 @@ describe('RegisterForm', () => {
     await user.click(submit)
 
     await waitFor(() => expect(screen.getByTestId('pathname'))        .toHaveTextContent('/app/student'))
+  })
+
+  it('asks the student to check their email when the account needs verifying', async () => {
+    vi.spyOn(auth.driver, 'signUp').mockRejectedValueOnce(new FakeAuthError('auth/verification-sent'))
+    const user = userEvent.setup()
+    renderForm()
+    await fillDetails(user)
+    await acceptConsent(user)
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+
+    expect(await screen.findByText('Check your email')).toBeVisible()
+    expect(screen.getByText(NEW_ACCOUNT.email)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Resend verification email' })).toBeVisible()
+    // Not an error, and not signed in.
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/register')
   })
 })

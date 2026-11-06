@@ -302,4 +302,20 @@ describe('LoginForm', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/disabled/i)
   })
+
+  it('offers to resend the link when the email is not verified yet', async () => {
+    vi.spyOn(auth.driver, 'signIn').mockRejectedValueOnce(new FakeAuthError('auth/email-not-verified'))
+    server.use(mswHttp.post('/api/auth/resend-verification', () => HttpResponse.json({ message: 'ok' })))
+    const user = userEvent.setup()
+    renderForm()
+
+    await user.type(screen.getByLabelText('Email'), 'riya@mit.ac.in')
+    await user.type(screen.getByLabelText('Password'), 'secret123')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/verify your email first/i))
+    await user.click(screen.getByRole('button', { name: 'Resend verification email' }))
+    expect(await screen.findByText(/a new link is on its way to riya@mit.ac.in/i)).toBeVisible()
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/login')
+  })
 })

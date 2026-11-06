@@ -214,7 +214,7 @@ test('student screens', async ({ page, context }) => {
     page.getByRole('button', { name: /^Output/ }).click(),
   )
   await t.shot(
-    'Exam: Run pressed (Judge0 not set up)',
+    'Exam: Run pressed (sample test cases)',
     () => page.getByRole('button', { name: 'Run', exact: true }).click(),
     'This is the message students see while Judge0 is not connected.',
   )

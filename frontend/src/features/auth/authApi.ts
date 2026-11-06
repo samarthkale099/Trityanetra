@@ -56,6 +56,10 @@ export function describeAuthError(error: unknown): string {
       return error instanceof Error && error.message
         ? error.message
         : 'Email and password sign-in is not enabled for this project yet.'
+    case 'auth/email-not-verified':
+      return 'Verify your email first: open the link we emailed you, then sign in.'
+    case 'auth/verification-sent':
+      return 'Account created. Check your email for a link to confirm it, then sign in.'
     case 'auth/user-disabled':
       return 'This account has been disabled. Contact your administrator.'
     case undefined:
@@ -226,6 +230,16 @@ export const authApi = {
       active = false
       unsubscribe()
     }
+  },
+
+  /** Confirms an email address with the token from the emailed link. */
+  verifyEmail: async (token: string): Promise<void> => {
+    await http.post('/api/auth/verify-email', { body: { token }, retryOnUnauthorized: false })
+  },
+
+  /** Sends a fresh verification link. Always succeeds, so it never reveals whether an account exists. */
+  resendVerification: async (email: string): Promise<void> => {
+    await http.post('/api/auth/resend-verification', { body: { email }, retryOnUnauthorized: false })
   },
 
   signUp: async (input: SignUpInput): Promise<void> => {

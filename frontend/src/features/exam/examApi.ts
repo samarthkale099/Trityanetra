@@ -28,7 +28,7 @@ import {
  * here, so the pages keep consuming the shared types unchanged.
  */
 
-/** One run of the student's code, as `POST /api/judge0/run` reports it. */
+/** One run of the student's code on one input. */
 export interface RunCaseResult {
   /** A visible test case id, or "custom" for the student's own input. */
   caseId: string
@@ -78,6 +78,91 @@ export function answersPayload(input: Pick<SubmitInput, 'code' | 'language' | 'a
     }
   }
   return { language: input.language, code: sanitizeCode(input.code, MAX_CODE_CHARS) }
+}
+
+/* ------------------------------------------------------------- code runs */
+
+/** Language ids the backend's code runner accepts (Judge0 CE numbering). */
+export const LANGUAGE_IDS: Record<ExamLanguage, number> = {
+  cpp: 54,
+  java: 62,
+  javascript: 63,
+  python: 71,
+}
+
+/** Visible cases run per press of Run; the server allows 10 runs a minute. */
+export const MAX_CASES_PER_RUN = 3
+
+export interface RunCase {
+  id: string
+  input: string
+  /** Null for the student's own input: there is nothing to compare against. */
+  expected: string | null
+}
+
+interface RawRunResult {
+  statusId: number
+  statusDescription: string | null
+  stdout: string | null
+  stderr: string | null
+  compileOutput: string | null
+  message: string | null
+  time: string | number | null
+  memory: number | null
+}
+
+const RUN_POLL_MS = 1500
+const RUN_POLL_LIMIT_MS = 30_000
+
+/** Starts one run and, when the server answers "pending", polls until it finishes. */
+async function runOnce(testId: string, code: string, language: ExamLanguage, stdin: string): Promise<RawRunResult> {
+  const started = await http.post<{ data: { runId: string; status: string; result?: RawRunResult } }>(
+    `/api/judge0/tests/${encodeURIComponent(testId)}/run`,
+    { body: { code, languageId: LANGUAGE_IDS[language], stdin }, retryOnUnauthorized: false },
+  )
+  let run = unwrap(started)
+  const deadline = Date.now() + RUN_POLL_LIMIT_MS
+  while (run.status === 'PENDING' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, RUN_POLL_MS))
+    const polled = await http.get<{ data: { runId: string; status: string; result?: RawRunResult } }>(
+      `/api/judge0/runs/${encodeURIComponent(run.runId)}`,
+    )
+    run = unwrap(polled)
+  }
+  if (run.status !== 'DONE' || !run.result) {
+    throw new ApiError(run.status === 'PENDING' ? 'The run took too long. Try again.' : 'The run failed.', {
+      status: 503,
+      code: 'RUN_FAILED',
+    })
+  }
+  return run.result
+}
+
+/** Trailing whitespace and line endings never decide pass or fail. */
+const normaliseOutput = (text: string) =>
+  text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim()
+
+function toRunCaseResult(job: RunCase, raw: RawRunResult): RunCaseResult {
+  const stdout = raw.stdout ?? ''
+  const accepted = raw.statusId === 3
+  const seconds = raw.time === null || raw.time === undefined ? null : Number(raw.time)
+  return {
+    caseId: job.id,
+    input: job.input,
+    expected: job.expected,
+    stdout,
+    stderr: raw.stderr ?? raw.message ?? '',
+    compileOutput: raw.compileOutput ?? '',
+    status: raw.statusDescription ?? (accepted ? 'Accepted' : 'Error'),
+    passed: job.expected === null ? null : accepted && normaliseOutput(stdout) === normaliseOutput(job.expected),
+    timeMs: seconds === null || Number.isNaN(seconds) ? null : Math.round(seconds * 1000),
+    memoryKb: raw.memory ?? null,
+  }
 }
 
 /* ------------------------------------------------------------------ mapping */
@@ -319,24 +404,31 @@ export const examApi = {
 
   /**
    * Runs the student's code on the question's VISIBLE test cases (plus an
-   * optional custom input) via `POST /api/judge0/run`. Nothing is saved.
+   * optional custom input) via `POST /api/judge0/tests/:testId/run`. Nothing is saved.
    * Rejects with status 503 while Judge0 is not configured on the server.
+   */
+  /**
+   * Runs the code on the question's visible test cases (at most
+   * `MAX_CASES_PER_RUN`, to stay inside the server's 10-runs-a-minute limit), or
+   * on the student's own input. One backend run per input; nothing is saved.
    */
   run: async (
     testId: string,
-    input: { questionId: string; code: string; language: ExamLanguage; customInput?: string },
+    input: { code: string; language: ExamLanguage; cases: RunCase[]; customInput?: string },
   ): Promise<RunCaseResult[]> => {
-    const payload = await http.post<{ data: { results: RunCaseResult[] } }>('/api/judge0/run', {
-      body: {
-        testId,
-        questionId: input.questionId,
-        code: sanitizeCode(input.code, 50_000),
-        language: input.language,
-        ...(input.customInput !== undefined ? { customInput: input.customInput } : {}),
-      },
-      retryOnUnauthorized: false,
-    })
-    return unwrap(payload).results ?? []
+    const code = sanitizeCode(input.code, 60_000)
+    const jobs: RunCase[] =
+      input.customInput !== undefined
+        ? [{ id: 'custom', input: input.customInput, expected: null }]
+        : input.cases.slice(0, MAX_CASES_PER_RUN)
+    if (jobs.length === 0) jobs.push({ id: 'custom', input: '', expected: null })
+    const results: RunCaseResult[] = []
+    // One after another: parallel runs would trip the per-student rate limit.
+    for (const job of jobs) {
+      const raw = await runOnce(testId, code, input.language, job.input)
+      results.push(toRunCaseResult(job, raw))
+    }
+    return results
   },
 
   /** This student's own submission for a test, or null. */

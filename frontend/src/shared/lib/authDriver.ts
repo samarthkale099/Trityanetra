@@ -132,7 +132,16 @@ export const backendAuthDriver: AuthDriver = {
       role: 'STUDENT',
     })
     if (status === 201) {
-      await backendAuthDriver.signIn(email, password)
+      try {
+        await backendAuthDriver.signIn(email, password)
+      } catch (error) {
+        // The usual case: the account must confirm its email before it can
+        // sign in. That is not a failure, so it gets its own code.
+        if ((error as { code?: string }).code === 'auth/email-not-verified') {
+          throw authError('auth/verification-sent', String(data?.message ?? 'Check your email.'))
+        }
+        throw error
+      }
       return
     }
     const message = String(data?.error ?? data?.message ?? '')
@@ -149,6 +158,9 @@ export const backendAuthDriver: AuthDriver = {
       return
     }
     if (status === 401 || status === 400) throw authError('auth/invalid-credential', 'Invalid credentials')
+    if (status === 403 && data?.code === 'EMAIL_NOT_VERIFIED') {
+      throw authError('auth/email-not-verified', String(data?.error ?? 'Please verify your email first.'))
+    }
     if (status === 429) throw authError('auth/too-many-requests', 'Too many attempts')
     throw authError('auth/unknown', String(data?.error ?? 'Sign-in failed.'))
   },

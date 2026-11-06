@@ -25,13 +25,20 @@ test mocks that imitate this API are `frontend/e2e/testBackend.ts` and
 | Method | Path | Who | Body → Response |
 |---|---|---|---|
 | POST | `/api/auth/register` | anyone | `{ email, password, role: "STUDENT", displayName?, collegeId? }` → `201 { user }` |
-| POST | `/api/auth/login` | anyone | `{ email, password }` → `{ token }` |
+| POST | `/api/auth/login` | anyone | `{ email, password }` → `{ token }`; **403 `{ code: "EMAIL_NOT_VERIFIED" }`** until the email is confirmed |
+| GET/POST | `/api/auth/verify-email` | anyone (token is the credential) | `?token=` or `{ token }` → 200; 400 if invalid or expired (24 h) |
+| POST | `/api/auth/resend-verification` | anyone | `{ email }` → always 200 (never reveals whether the account exists) |
 | GET | `/api/auth/me` | signed in | → `{ user: { uid, email, displayName, role, collegeId, createdAt } }` |
 | POST | `/api/auth/assign-role` | admin | `{ targetUid, role, collegeId }` |
 
 - Self-registration only ever creates `STUDENT` accounts.
-- `collegeId` is optional: when omitted, the college whose `emailDomain` matches the
-  email is used; with neither, registration is refused (400).
+- `collegeId` is optional: a student whose email is on a college's `emailDomain` (or a
+  subdomain of it) is placed there automatically; otherwise a `collegeId` is required, and a
+  college that has an `emailDomain` only accepts its own domain (403).
+- **Email verification**: registration emails a link to `APP_BASE_URL/verify-email?token=…`
+  (the frontend's `/verify-email` page). Sign-in is refused until it is opened. Accounts
+  created before this feature (no `emailVerified` field) are not affected. Without
+  `SMTP_URL` the link is printed in the backend log instead of emailed.
 - Emails are stored lower-cased. On registration **and** sign-in, pending classroom
   invites for that email are moved onto the roster.
 
@@ -103,20 +110,26 @@ Rules:
 - Guard order on save/submit: role → classroom membership → test window → lock.
   A second submit hits the lock (**403 "locked"**); the frontend treats that as
   "already submitted".
-- `answers` is `{ language, code }` (one program per test), or
-  `{ language, questions: { [questionId]: { code } } }`.
+- `answers` is `{ language, code }` when the test has one question (our normal case: one
+  test per experiment), and `{ language, questions: { [questionId]: { code } } }` when it has
+  several, so no question's code is lost. The plagiarism worker reads both.
 - `state` is `SUBMITTED`, `LATE` (after the window) or `NOT_SUBMITTED`.
 
-## Code execution (Judge0)
+## Code execution (Piston / Paiza / Judge0)
 
 | Method | Path | Who | Body → Response |
 |---|---|---|---|
-| POST | `/api/judge0/run` | student (enrolled, window open, not submitted) | `{ testId, questionId, code, language, customInput? }` → `{ data: { results: RunCaseResult[] } }` |
+| POST | `/api/judge0/tests/:testId/run` | student (enrolled, window open) | `{ code, languageId, stdin? }` → `200 { data: { runId, status: "DONE", result } }` (sync) or `202 { data: { runId, status: "PENDING" } }` |
+| GET | `/api/judge0/runs/:runId` | the student who started it | → `{ data: { runId, status, result, error } }` |
 
-- Runs **visible** test cases only (max 10) plus optional custom input; nothing is saved.
-- Rate limit: 10 runs per minute per student. **503** until `JUDGE0_API_URL` and
-  `JUDGE0_API_KEY` are set in `backend/.env`.
-- Languages: `python`, `javascript`, `java`, `cpp`, `c`.
+- `result`: `{ statusId, statusDescription, stdout, stderr, compileOutput, message, time, memory }`
+  (`statusId` 3 = Accepted, Judge0 numbering).
+- `languageId` (Judge0 CE ids): python 71, javascript 63, java 62, cpp 54, c 50.
+- Provider from `CODE_EXECUTION_PROVIDER`: `piston` (free, default), `paiza` (free) or `judge0`.
+- Rate limit: 10 runs per minute per student. Nothing is saved as an answer.
+- The frontend's Run button runs the question's **visible** test cases (up to 3 per press)
+  one at a time and compares each output with the expected output; hidden cases are
+  never sent to the browser.
 
 ## Monitoring (advisory)
 
