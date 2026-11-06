@@ -127,7 +127,8 @@ test.describe('teacher review flow', () => {
     await expect(page.getByRole('heading', { name: 'Riya Sharma' })).toBeVisible()
     // The submitted code is painted inside the real Monaco editor, not merely
     // mounted as an empty container.
-    await expect(page.locator('.monaco-editor .view-lines')).toContainText('indexOf')
+    // Monaco is fetched from a CDN on first use, which can be slow on a busy machine.
+    await expect(page.locator('.monaco-editor .view-lines')).toContainText('indexOf', { timeout: 60_000 })
 
     // A graded save is private: the student sees nothing until release.
     await page.getByLabel('Marks out of 10').fill('4')
