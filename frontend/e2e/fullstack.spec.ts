@@ -158,7 +158,7 @@ test('2. the teacher creates a classroom, adds students by email and sets a test
   await page.getByLabel('Time allowed (minutes)').fill('30')
   await page.getByLabel('Question 1 prompt').fill('Read two integers a and b on one line and print a + b.')
   await page.getByRole('button', { name: 'Create test' }).click()
-  await page.waitForURL(/\/tests\/[^/]+$/, { timeout: 60_000 })
+  await page.waitForURL(/\/tests\/(?!new$)[^/]+$/, { timeout: 60_000 })
   testId = decodeURIComponent(page.url().split('/tests/')[1])
   expect(testId).not.toBe('')
 })

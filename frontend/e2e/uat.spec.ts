@@ -98,7 +98,7 @@ async function createTest(page: Page, title: string, minutes: number) {
   await page.getByLabel('Question 1 prompt').fill('Read two integers on one line and print their sum.')
   await timed(`Teacher creates the test "${title}"`, BUDGET.action, async () => {
     await page.getByRole('button', { name: 'Create test' }).click()
-    await page.waitForURL(/\/tests\/[^/]+$/, { timeout: 60_000 })
+    await page.waitForURL(/\/tests\/(?!new$)[^/]+$/, { timeout: 60_000 })
   })
   return decodeURIComponent(page.url().split('/tests/')[1])
 }
