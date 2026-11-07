@@ -48,10 +48,13 @@ const python = process.env.AST_PYTHON || (existsSync(venvPython) ? `"${venvPytho
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: 'fullstack.spec.ts',
+  // The exam walk-through first, then the user-acceptance checks (same seeded database).
+  testMatch: ['fullstack.spec.ts', 'uat.spec.ts'],
   workers: 1,
   retries: 0,
   timeout: 10 * 60_000,
+  // One browser at a time: the steps build on each other.
+  fullyParallel: false,
   expect: { timeout: 30_000 },
   reporter: [['list']],
   globalSetup: './e2e/fullstack.setup.ts',

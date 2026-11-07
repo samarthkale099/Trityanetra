@@ -32,11 +32,24 @@ async function seed() {
     ['student-kabir', { email: 'kabir@mit.ac.in', displayName: 'Kabir Mehta', role: 'STUDENT', collegeId: 'college-mit' }],
     // Same college, never added to the classroom: must not see the test.
     ['student-sam', { email: 'sam@mit.ac.in', displayName: 'Sam Outsider', role: 'STUDENT', collegeId: 'college-mit' }],
+    // For the user-acceptance run (e2e/uat.spec.ts):
+    ['student-tara', { email: 'tara@mit.ac.in', displayName: 'Tara Iyer', role: 'STUDENT', collegeId: 'college-mit' }],
+    ['student-dev', { email: 'dev@mit.ac.in', displayName: 'Dev Patil', role: 'STUDENT', collegeId: 'college-mit' }],
+    ['teacher-neha', { email: 'neha@mit.ac.in', displayName: 'Neha Kulkarni', role: 'TEACHER', collegeId: 'college-mit' }],
+    ['admin-mit', { email: 'collegeadmin@mit.ac.in', displayName: 'MIT Admin', role: 'ADMIN', collegeId: 'college-mit' }],
+    // Another college: its student must never be addable to an MIT classroom.
+    ['student-priya', { email: 'priya@vit.ac.in', displayName: 'Priya Rao', role: 'STUDENT', collegeId: 'college-vit' }],
   ];
+  await db.collection('colleges').doc('college-vit').set({
+    name: 'VIT University',
+    code: 'VIT',
+    emailDomain: 'vit.ac.in',
+    createdAt: now,
+  });
   for (const [uid, data] of users) {
     await db.collection('users').doc(uid).set({ ...data, passwordHash, emailVerified: true, createdAt: now });
   }
-  console.log(`Seeded 1 college and ${users.length} users into the emulator.`);
+  console.log(`Seeded 2 colleges and ${users.length} users into the emulator.`);
   process.exit(0);
 }
 
