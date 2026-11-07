@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/app/providers/AuthProvider'
 import { AuthSplash } from '@/app/AuthSplash'
-import { roleHomePath, STUDENT_ROLES, TEACHER_ROLES } from '@/shared/lib/roles'
+import { roleHomePath, STUDENT_ROLES, TEACHER_ROLES, ADMIN_ROLES } from '@/shared/lib/roles'
 import type { UserRole } from '@/shared/types'
 
 /** Sends a guest to the login page, keeping the intended destination. */
@@ -61,6 +61,11 @@ export function TeacherOnly({ children }: { children: ReactNode }) {
  */
 export function StudentOnly({ children }: { children: ReactNode }) {
   return <RequireRole allow={STUDENT_ROLES}>{children}</RequireRole>
+}
+
+/** Admin-only gate for colleges and role management. The server re-checks every call. */
+export function AdminOnly({ children }: { children: ReactNode }) {
+  return <RequireRole allow={ADMIN_ROLES}>{children}</RequireRole>
 }
 
 /** `/` resolves to the right surface for the current session. */

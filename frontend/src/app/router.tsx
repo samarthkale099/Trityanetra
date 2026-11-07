@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom'
-import { RootRedirect, Protected, GuestOnly, StudentOnly, TeacherOnly } from '@/app/guards'
+import { RootRedirect, Protected, GuestOnly, StudentOnly, TeacherOnly, AdminOnly } from '@/app/guards'
 import { AuthSplash } from '@/app/AuthSplash'
 
 /*
@@ -15,6 +15,10 @@ const LoginPage = lazy(() => import('@/pages/auth/Login').then((m) => ({ default
 const RegisterPage = lazy(() => import('@/pages/auth/Register').then((m) => ({ default: m.RegisterPage })))
 const VerifyEmailPage = lazy(() => import('@/pages/auth/VerifyEmail').then((m) => ({ default: m.VerifyEmailPage })))
 const NotFoundPage = lazy(() => import('@/pages/NotFound').then((m) => ({ default: m.NotFoundPage })))
+
+/* Admin area (pages/college). */
+const CollegesPage = lazy(() => import('@/pages/college/Colleges').then((m) => ({ default: m.CollegesPage })))
+const PeoplePage = lazy(() => import('@/pages/college/People').then((m) => ({ default: m.PeoplePage })))
 
 /* Teacher area. */
 const ClassroomListPage = lazy(() =>
@@ -94,6 +98,23 @@ export const routes: RouteObject[] = [
       {
         path: 'dashboard',
         element: withSuspense(<DashboardPage />),
+      },
+      /* -------------------------------------------------------- admin-only */
+      {
+        path: 'admin/colleges',
+        element: withSuspense(
+          <AdminOnly>
+            <CollegesPage />
+          </AdminOnly>,
+        ),
+      },
+      {
+        path: 'admin/people',
+        element: withSuspense(
+          <AdminOnly>
+            <PeoplePage />
+          </AdminOnly>,
+        ),
       },
       /* ------------------------------------------------------ teacher-only */
       {
