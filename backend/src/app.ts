@@ -30,6 +30,11 @@ app.use(requestLogger);
 app.use(corsMiddleware);
 app.use(bodySizeLimit);
 
+// Liveness check for hosts (Render, Cloud Run). No database call, so it stays cheap.
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 app.use('/api/colleges', collegeRoutes);
 app.use('/api/classrooms', classroomRoutes);
 app.use('/api/tests', testRoutes);

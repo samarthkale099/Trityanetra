@@ -120,6 +120,9 @@ Both services now rebuild automatically whenever `main` changes.
 
 ## 8. Website on Firebase Hosting (10 min)
 
+First add the API forwarding rule to `frontend/firebase.json`, before the `**` rule:
+`{ "source": "/api/**", "run": { "serviceId": "trityanetra-backend", "region": "asia-south1" } }`.
+
 1. Firebase console → **Project settings** → **Service accounts** →
    **Generate new private key**. A JSON file downloads. **It is a master key**: do not email
    it or commit it.

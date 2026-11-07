@@ -1,6 +1,6 @@
 # Publishes the website to Firebase Hosting whenever main changes.
-# Turns itself on once the repository has the variable FIREBASE_PROJECT_ID and the
-# secret FIREBASE_SERVICE_ACCOUNT (see docs/deploy-google.md). Until then it is skipped.
+# Turns itself on once the repository has the variables FIREBASE_PROJECT_ID and API_BASE_URL
+# and the secret FIREBASE_SERVICE_ACCOUNT (see docs/deploy-free.md). Until then it is skipped.
 name: Deploy website
 
 on:
@@ -25,6 +25,9 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+        env:
+          # The backend's address, e.g. https://trityanetra-api.onrender.com
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
