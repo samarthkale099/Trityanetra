@@ -61,6 +61,11 @@ backend/config/serviceAccountKey.json
 # Local test-run output
 vitest-*.txt
 vitest-results.json
+# Playwright (frontend E2E) output
+test-results/
+playwright-report/
+# Local tool downloads (e.g. a portable JDK for the Firebase emulator)
+/.tools/
 
 # Firebase emulator debug logs
 firestore-debug.log

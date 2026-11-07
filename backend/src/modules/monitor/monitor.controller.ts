@@ -1,5 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
-import { submitFlagService, MonitorFlagType } from './monitor.service';
+import { submitFlagService, listFlagsForTestService, MonitorFlagType } from './monitor.service';
+
+/** Teacher: the integrity report for a test, grouped by student. */
+export const listFlags = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await listFlagsForTestService(req.params.testId, req.user!);
+    res.status(200).json({ data });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const submitFlag = async (req: Request, res: Response, next: NextFunction) => {
   try {

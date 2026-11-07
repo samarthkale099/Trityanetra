@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Trityanetra">
+  <rect width="32" height="32" rx="8" fill="#163566"/>
+  <g fill="none" stroke="#ffffff" stroke-width="2">
+    <circle cx="16" cy="11" r="4.2"/>
+    <circle cx="10.4" cy="20.5" r="4.2"/>
+    <circle cx="21.6" cy="20.5" r="4.2"/>
+  </g>
+  <circle cx="16" cy="11" r="1.6" fill="#E8963B"/>
+  <circle cx="10.4" cy="20.5" r="1.6" fill="#ffffff" opacity="0.9"/>
+  <circle cx="21.6" cy="20.5" r="1.6" fill="#ffffff" opacity="0.9"/>
+</svg>

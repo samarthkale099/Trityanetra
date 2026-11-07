@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { assignUserRole, register, login, verifyEmail, resendVerificationEmail } from './auth.controller';
+import { assignUserRole, register, login, me, verifyEmail, resendVerificationEmail } from './auth.controller';
 import { authenticateJwt } from './jwt.middleware';
 import { requireRole } from '../../middleware/rbac.middleware';
 import { validateBody } from '../../middleware/validateBody';
@@ -14,6 +14,8 @@ router.post('/assign-role', authenticateJwt, requireRole([Role.ADMIN]), assignUs
 // New JWT auth routes
 router.post('/register', validateBody(registerSchema), register);
 router.post('/login', validateBody(loginSchema), login);
+// The signed-in user's profile (name, email, role, college) for the app shell.
+router.get('/me', authenticateJwt, me);
 
 // Email verification (no auth: the token in the link is the credential).
 router.get('/verify-email', verifyEmail);

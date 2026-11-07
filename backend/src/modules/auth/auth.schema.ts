@@ -11,7 +11,8 @@ export const registerSchema = z.object({
     message: "Only STUDENT accounts can self-register; TEACHER and ADMIN accounts are assigned by an admin"
   }),
   // Optional: a student whose email domain belongs to a college is placed there automatically.
-  collegeId: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined))
+  collegeId: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  displayName: z.string().trim().max(80, "Name is too long").optional(),
 });
 
 export const loginSchema = z.object({

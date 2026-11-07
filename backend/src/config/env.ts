@@ -31,7 +31,7 @@ export const env = {
   // Public base URL Judge0 can reach us at, e.g. https://api.example.com (no trailing slash needed).
   JUDGE0_CALLBACK_BASE_URL: process.env.JUDGE0_CALLBACK_BASE_URL,
   // Public URL of the frontend, used to build email-verification links. Defaults to localhost in dev.
-  APP_BASE_URL: process.env.APP_BASE_URL || 'http://localhost:3000',
+  APP_BASE_URL: process.env.APP_BASE_URL || 'http://localhost:5173', // the Vite frontend (dev)
   // SMTP connection string (e.g. smtps://user:pass@smtp.host:465). If unset, verification emails are
   // not actually sent: in dev the link is logged to the server console instead.
   SMTP_URL: process.env.SMTP_URL,
