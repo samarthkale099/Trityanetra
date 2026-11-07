@@ -50,7 +50,7 @@ export default defineConfig({
   testDir: './e2e',
   // The exam walk-through, the user-acceptance checks, then the 50-student class simulation
   // (same seeded database, run in that order).
-  testMatch: ['fullstack.spec.ts', 'uat.spec.ts', 'simulation.spec.ts'],
+  testMatch: ['fullstack.spec.ts', 'uat.spec.ts', 'simulation.spec.ts', 'ui-simulation.spec.ts'],
   workers: 1,
   retries: 0,
   timeout: 10 * 60_000,
@@ -62,6 +62,9 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${FULLSTACK.frontendPort}`,
     trace: 'retain-on-failure',
+    // No click or page load may wait forever; a stuck step fails and is reported.
+    actionTimeout: 60_000,
+    navigationTimeout: 90_000,
     ...(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {}),
   },
   projects: [{ name: 'fullstack', use: { ...devices['Desktop Chrome'] } }],

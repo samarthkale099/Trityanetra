@@ -89,7 +89,7 @@ jobs:
   fullstack:
     name: Full-stack integration (real backend + Firestore + Redis + AST engine)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     needs: [backend, frontend, ast-engine]
     services:
       redis:
@@ -119,7 +119,7 @@ jobs:
         working-directory: frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
-      - name: Exam walk-through, user acceptance tests, 50-student class simulation
+      - name: Exam walk-through, user acceptance tests, 50-student class simulations (API and browser)
         run: npm run test:fullstack
         working-directory: frontend
         env:
@@ -136,6 +136,7 @@ jobs:
           path: |
             frontend/test-results/uat/
             frontend/test-results/simulation/
+            frontend/test-results/ui-simulation/
           retention-days: 30
       - uses: actions/upload-artifact@v4
         if: failure()
