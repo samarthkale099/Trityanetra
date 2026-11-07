@@ -49,7 +49,7 @@ export function describeAuthError(error: unknown): string {
     case 'auth/invalid-login-credentials':
       return 'The email or password is incorrect.'
     case 'auth/too-many-requests':
-      return 'Too many attempts — please wait a minute and try again.'
+      return 'Too many attempts. Wait 15 minutes and try again.'
     case 'auth/network-request-failed':
       return 'Could not reach the authentication service. Check your connection.'
     case 'auth/operation-not-allowed':

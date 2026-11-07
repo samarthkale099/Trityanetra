@@ -8,7 +8,8 @@ INTERNAL_SECRET = os.getenv("AST_ENGINE_INTERNAL_SECRET", "")
 
 # Server
 HOST = os.getenv("AST_ENGINE_HOST", "0.0.0.0")
-PORT = int(os.getenv("AST_ENGINE_PORT", "8000"))
+# Cloud Run and similar platforms set PORT.
+PORT = int(os.getenv("AST_ENGINE_PORT") or os.getenv("PORT") or "8000")
 
 # Plagiarism thresholds
 COSINE_SIMILARITY_LOW = 0.3

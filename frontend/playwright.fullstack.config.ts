@@ -104,6 +104,8 @@ export default defineConfig({
         CODE_EXECUTION_PROVIDER: process.env.CODE_EXECUTION_PROVIDER || 'paiza',
         APP_BASE_URL: `http://127.0.0.1:${FULLSTACK.frontendPort}`,
         SMTP_URL: '',
+        LOGIN_RATE_LIMIT: '10000',
+        REGISTER_RATE_LIMIT: '10000',
       }),
       // 401 counts as "up": the route exists and needs a token.
       url: `http://127.0.0.1:${FULLSTACK.backendPort}/api/auth/me`,

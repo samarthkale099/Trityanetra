@@ -1,0 +1,7 @@
+node_modules
+dist
+.env
+.env.*
+config
+*.log
+firestore-debug.log

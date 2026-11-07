@@ -9,8 +9,10 @@ if (process.env.NODE_ENV !== 'test') {
   initPlagiarismQueue();
   initPlagiarismWorker();
 
-  app.listen(Number(PORT), '127.0.0.1', () => {
-    console.log(`Server is running on port ${PORT}`);
+  // 127.0.0.1 locally; containers set HOST=0.0.0.0 so the platform can reach the server.
+  const HOST = process.env.HOST || '127.0.0.1';
+  app.listen(Number(PORT), HOST, () => {
+    console.log(`Server is running on ${HOST}:${PORT}`);
   });
 }
 
