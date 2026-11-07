@@ -45,7 +45,7 @@ describe('authApi (Firebase driver bridge)', () => {
       ['auth/wrong-password', /email or password is incorrect/i],
       ['auth/user-not-found', /email or password is incorrect/i],
       ['auth/invalid-login-credentials', /email or password is incorrect/i],
-      ['auth/too-many-requests', /wait a minute/i],
+      ['auth/too-many-requests', /wait 15 minutes/i],
       ['auth/network-request-failed', /could not reach the authentication service/i],
       ['auth/operation-not-allowed', /not enabled for this project/i],
       ['auth/user-disabled', /disabled/i],

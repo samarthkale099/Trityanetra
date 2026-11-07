@@ -15,6 +15,13 @@ import usersRoutes from './modules/users/users.routes';
 
 const app = express();
 
+// Behind Google's front end (and Firebase Hosting), the client's address is in X-Forwarded-For.
+// TRUST_PROXY is the number of proxies in front of the server (unset locally).
+if (process.env.TRUST_PROXY) {
+  const hops = Number(process.env.TRUST_PROXY);
+  app.set('trust proxy', Number.isFinite(hops) ? hops : process.env.TRUST_PROXY === 'true');
+}
+
 import { corsMiddleware } from './middleware/cors';
 import { bodySizeLimit } from './middleware/bodySizeLimit';
 
@@ -22,6 +29,11 @@ app.use(requestLogger);
 
 app.use(corsMiddleware);
 app.use(bodySizeLimit);
+
+// Liveness check for hosts (Render, Cloud Run). No database call, so it stays cheap.
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
 
 app.use('/api/colleges', collegeRoutes);
 app.use('/api/classrooms', classroomRoutes);

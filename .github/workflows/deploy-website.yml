@@ -1,0 +1,37 @@
+# Publishes the website to Firebase Hosting whenever main changes.
+# Turns itself on once the repository has the variables FIREBASE_PROJECT_ID and API_BASE_URL
+# and the secret FIREBASE_SERVICE_ACCOUNT (see docs/deploy-free.md). Until then it is skipped.
+name: Deploy website
+
+on:
+  push:
+    branches: [main]
+    paths: ['frontend/**', '.github/workflows/deploy-website.yml']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: ${{ vars.FIREBASE_PROJECT_ID != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+        env:
+          # The backend's address, e.g. https://trityanetra-api.onrender.com
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ vars.FIREBASE_PROJECT_ID }}
+          channelId: live
+          entryPoint: frontend

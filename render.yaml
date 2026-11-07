@@ -1,0 +1,61 @@
+# Render Blueprint: creates the backend and the AST engine on Render's free plan.
+# Render dashboard -> New -> Blueprint -> pick this repository. It asks only for the
+# values marked `sync: false`; the two secrets are generated and shared automatically.
+# Full steps: docs/deploy-free.md
+services:
+  - type: web
+    name: trityanetra-ast
+    runtime: docker
+    plan: free
+    region: singapore
+    rootDir: ast-engine
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: AST_ENGINE_INTERNAL_SECRET
+        generateValue: true
+      - key: AST_ENGINE_HOST
+        value: 0.0.0.0
+
+  - type: web
+    name: trityanetra-api
+    runtime: docker
+    plan: free
+    region: singapore
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AST_ENGINE_SECRET
+        fromService:
+          name: trityanetra-ast
+          type: web
+          envVarKey: AST_ENGINE_INTERNAL_SECRET
+      # https://trityanetra-ast.onrender.com (shown on the AST service's page)
+      - key: AST_ENGINE_URL
+        sync: false
+      # Redis Cloud free database: redis://default:<password>@<endpoint>
+      - key: REDIS_URL
+        sync: false
+      # The whole Firebase service-account JSON (Project settings -> Service accounts)
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      # https://<firebase-project-id>.web.app
+      - key: APP_BASE_URL
+        sync: false
+      # https://<firebase-project-id>.web.app,https://<firebase-project-id>.firebaseapp.com
+      - key: CORS_ORIGINS
+        sync: false
+      # smtps://<gmail%40address>:<app-password>@smtp.gmail.com:465
+      - key: SMTP_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: CODE_EXECUTION_PROVIDER
+        value: paiza
+      - key: PAIZA_API_KEY
+        value: guest
+      - key: TRUST_PROXY
+        value: '1'

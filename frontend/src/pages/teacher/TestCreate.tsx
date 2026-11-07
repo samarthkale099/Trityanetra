@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { useFieldArray, useForm } from 'react-hook-form'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, LoaderCircle, Plus, Trash2 } from 'lucide-react'
@@ -38,6 +38,7 @@ function defaultWindow() {
 export function TestCreatePage() {
   const { classroomId } = useParams<{ classroomId: string }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const inFlight = useRef(false)
   const [submitting, setSubmitting] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
@@ -80,7 +81,13 @@ export function TestCreatePage() {
           testCases: [],
         })),
       }),
-    onSuccess: (test) => {
+    onSuccess: async (test) => {
+      // Refresh the classroom's test list first: without this the classroom page
+      // showed its cached list and the new test appeared only after a reload.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['classrooms', classroomId] }),
+        queryClient.invalidateQueries({ queryKey: ['tests'] }),
+      ])
       toast.success('Test created', { description: `${test.title} is scheduled.` })
       // Back to the classroom that owns the test, which is where the new row
       // becomes visible. The classroom id comes from the route param.
