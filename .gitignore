@@ -72,3 +72,6 @@ firestore-debug.log
 ui-debug.log
 firebase-debug.log
 *-debug.log
+
+# Full-stack test run output
+fullstack-backend.log
