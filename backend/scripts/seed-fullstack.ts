@@ -46,6 +46,14 @@ async function seed() {
     emailDomain: 'vit.ac.in',
     createdAt: now,
   });
+  // A full lab class for the class-scale simulation (e2e/simulation.spec.ts): sim-01 .. sim-50.
+  for (let i = 1; i <= 50; i++) {
+    const n = String(i).padStart(2, '0');
+    users.push([
+      `sim-${n}`,
+      { email: `sim${n}@mit.ac.in`, displayName: `Student ${n}`, role: 'STUDENT', collegeId: 'college-mit' },
+    ]);
+  }
   for (const [uid, data] of users) {
     await db.collection('users').doc(uid).set({ ...data, passwordHash, emailVerified: true, createdAt: now });
   }

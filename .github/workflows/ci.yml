@@ -89,7 +89,7 @@ jobs:
   fullstack:
     name: Full-stack integration (real backend + Firestore + Redis + AST engine)
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     needs: [backend, frontend, ast-engine]
     services:
       redis:
@@ -119,7 +119,7 @@ jobs:
         working-directory: frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
-      - name: One exam end to end, nothing stubbed
+      - name: Exam walk-through, user acceptance tests, 50-student class simulation
         run: npm run test:fullstack
         working-directory: frontend
         env:
@@ -127,7 +127,16 @@ jobs:
           JAVA_TOOL_OPTIONS: -Xmx1g
       - name: Backend log
         if: always()
-        run: cat fullstack-backend.log || true
+        run: tail -n 300 fullstack-backend.log || true
+      - name: Keep the timing and simulation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            frontend/test-results/uat/
+            frontend/test-results/simulation/
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

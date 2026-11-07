@@ -48,8 +48,9 @@ const python = process.env.AST_PYTHON || (existsSync(venvPython) ? `"${venvPytho
 
 export default defineConfig({
   testDir: './e2e',
-  // The exam walk-through first, then the user-acceptance checks (same seeded database).
-  testMatch: ['fullstack.spec.ts', 'uat.spec.ts'],
+  // The exam walk-through, the user-acceptance checks, then the 50-student class simulation
+  // (same seeded database, run in that order).
+  testMatch: ['fullstack.spec.ts', 'uat.spec.ts', 'simulation.spec.ts'],
   workers: 1,
   retries: 0,
   timeout: 10 * 60_000,
