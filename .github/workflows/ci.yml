@@ -86,6 +86,29 @@ jobs:
           path: frontend/test-results/
           retention-days: 7
 
+  containers:
+    name: Containers build (Cloud Run images)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend image
+        run: docker build -t trityanetra-backend ./backend
+      - name: AST engine image
+        run: docker build -t trityanetra-ast ./ast-engine
+      - name: Backend image starts and answers
+        run: |
+          docker run -d --name api -p 8080:8080 \
+            -e JWT_SECRET=ci -e REDIS_URL=redis://127.0.0.1:6390 \
+            -e AST_ENGINE_URL=http://127.0.0.1:1 -e AST_ENGINE_SECRET=ci \
+            -e GOOGLE_CLOUD_PROJECT=demo-ci trityanetra-backend
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/auth/me || true)
+            [ "$code" = "401" ] && echo "backend answered 401 as expected" && exit 0
+            sleep 2
+          done
+          docker logs api; exit 1
+
   fullstack:
     name: Full-stack integration (real backend + Firestore + Redis + AST engine)
     runs-on: ubuntu-latest
