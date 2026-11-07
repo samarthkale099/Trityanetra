@@ -11,6 +11,7 @@ import authRoutes from './modules/auth/auth.routes';
 import monitorRoutes from './modules/monitor/monitor.routes';
 import plagiarismRoutes from './modules/plagiarism/plagiarism.routes';
 import judge0Routes from './modules/judge0/judge0.routes';
+import usersRoutes from './modules/users/users.routes';
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/monitor', monitorRoutes);
 app.use('/api/plagiarism', plagiarismRoutes);
 app.use('/api/judge0', judge0Routes);
+app.use('/api/users', usersRoutes);
 
 app.use(errorHandler);
 

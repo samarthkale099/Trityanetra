@@ -19,6 +19,9 @@ export const ROLE_LABELS: Readonly<Record<UserRole, string>> = {
   ADMIN: 'Administrator',
 }
 
+/** Roles that may open the admin area (colleges and people). */
+export const ADMIN_ROLES: readonly UserRole[] = ['ADMIN'] as const
+
 /** Roles that may open teacher-only areas. */
 export const TEACHER_ROLES: readonly UserRole[] = ['TEACHER', 'ADMIN'] as const
 

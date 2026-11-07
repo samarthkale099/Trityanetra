@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { BookOpen, GraduationCap, LayoutDashboard, Menu, X } from 'lucide-react'
+import { BookOpen, Building2, GraduationCap, LayoutDashboard, Menu, UserCog, X } from 'lucide-react'
 import { Logo } from '@/shared/components/brand/Logo'
 import { ThemeToggle } from '@/shared/components/ThemeToggle'
 import { useAuth } from '@/app/providers/AuthProvider'
@@ -17,6 +17,8 @@ import { AccountMenu, SignOutDialog } from '@/features/auth/AccountMenu'
 
 /** Route prefix -> header crumb. Ordered longest-first so nested paths resolve. */
 const LOCATION_AREAS = [
+  ['/app/admin/colleges', 'Colleges'],
+  ['/app/admin/people', 'People'],
   ['/app/classrooms', 'Classrooms'],
   ['/app/student', 'My tests'],
   ['/app/dashboard', 'Account'],
@@ -27,6 +29,8 @@ const AREA_LABELS: Record<string, string> = {
   'My tests': 'My tests',
   Account: 'Account',
   Dashboard: 'Dashboard',
+  Colleges: 'Colleges',
+  People: 'People',
 }
 
 interface NavItem {
@@ -79,8 +83,15 @@ const ACCOUNT_ITEM: NavItem = {
 /** For staff the same `/app/dashboard` route is their overview, so it leads the rail. */
 const DASHBOARD_ITEM: NavItem = { ...ACCOUNT_ITEM, label: 'Dashboard' }
 
-function navItemsFor(teacher: boolean): readonly NavItem[] {
-  return teacher ? [DASHBOARD_ITEM, ...AREA_NAV.staff] : [...AREA_NAV.student, ACCOUNT_ITEM]
+/** Admins also manage colleges and roles; nobody else sees these links. */
+const ADMIN_NAV: readonly NavItem[] = [
+  { to: '/app/admin/people', label: 'People', icon: <UserCog className="h-4 w-4" aria-hidden="true" /> },
+  { to: '/app/admin/colleges', label: 'Colleges', icon: <Building2 className="h-4 w-4" aria-hidden="true" /> },
+]
+
+function navItemsFor(teacher: boolean, admin = false): readonly NavItem[] {
+  if (!teacher) return [...AREA_NAV.student, ACCOUNT_ITEM]
+  return admin ? [DASHBOARD_ITEM, ...AREA_NAV.staff, ...ADMIN_NAV] : [DASHBOARD_ITEM, ...AREA_NAV.staff]
 }
 
 /**
@@ -168,7 +179,7 @@ export function AppShell() {
   const { role } = useAuth()
 
   const teacher = isTeacherRole(role)
-  const items = navItemsFor(teacher)
+  const items = navItemsFor(teacher, role === 'ADMIN')
 
   /*
    * The header crumb follows the route rather than being hard-coded to

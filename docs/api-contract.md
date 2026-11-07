@@ -49,6 +49,22 @@ test mocks that imitate this API are `frontend/e2e/testBackend.ts` and
 | POST | `/api/colleges` | `{ name, code, emailDomain? }` → `201 { data: { id, name, code, emailDomain } }` (root admin) |
 | GET | `/api/colleges` | → `{ data: College[] }` |
 
+## Users (admin)
+
+| Method | Path | Who | Response |
+|---|---|---|---|
+| GET | `/api/users?email=&role=&collegeId=` | admin | `{ data: [{ uid, email, displayName, role, collegeId, emailVerified, createdAt }] }` |
+
+- Used by the admin **People** page to find someone before `POST /api/auth/assign-role`.
+- A college admin only ever sees their own college (a user elsewhere looks like no match);
+  a root admin (no `collegeId`) sees every college and may narrow with `collegeId`.
+- `email` is an exact, case-insensitive match. Lists are capped at 100. Password hashes and
+  verification tokens are never returned.
+- A changed role takes effect the next time that person signs in (the role is in their token).
+
+Frontend admin area (`frontend/src/pages/college/`): **People** (`/app/admin/people`) and
+**Colleges** (`/app/admin/colleges`), visible to admins only.
+
 ## Classrooms
 
 | Method | Path | Who | Body → Response |
