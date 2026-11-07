@@ -1,0 +1,163 @@
+# Runs every test suite on each pull request and on pushes to main.
+# A red check on a pull request means: do not merge until it is fixed.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (API + Firestore emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # The Firestore emulator needs Java 21.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+
+  frontend:
+    name: Frontend (typecheck, lint, unit tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  frontend-e2e:
+    name: Frontend browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: frontend
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Browser tests (stubbed backend)
+        run: >-
+          npx playwright test --project=chromium
+          e2e/auth.spec.ts e2e/exam.spec.ts e2e/classrooms.spec.ts
+          e2e/review.spec.ts e2e/result.spec.ts e2e/field-states.spec.ts
+          e2e/admin.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/test-results/
+          retention-days: 7
+
+  fullstack:
+    name: Full-stack integration (real backend + Firestore + Redis + AST engine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    needs: [backend, frontend, ast-engine]
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ast-engine/requirements.txt
+      - run: pip install -r ast-engine/requirements.txt
+      - run: npm ci
+        working-directory: backend
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Exam walk-through, user acceptance tests, 50-student class simulations (API and browser)
+        run: npm run test:fullstack
+        working-directory: frontend
+        env:
+          AST_PYTHON: python
+          JAVA_TOOL_OPTIONS: -Xmx1g
+      - name: Backend log
+        if: always()
+        run: tail -n 300 fullstack-backend.log || true
+      - name: Keep the timing and simulation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            frontend/test-results/uat/
+            frontend/test-results/simulation/
+            frontend/test-results/ui-simulation/
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fullstack-traces
+          path: frontend/test-results/
+          retention-days: 7
+
+  ast-engine:
+    name: AST engine (plagiarism)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ast-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ast-engine/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests -q

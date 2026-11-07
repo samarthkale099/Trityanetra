@@ -94,11 +94,25 @@ function AddStudentsCard({
       form.reset()
       const added = result.added.length
       const already = result.alreadyEnrolled.length
+      // Addresses the server refused (another college, not a student, malformed) must be
+      // named, or a teacher reads "0 students added" with no idea why.
+      const rejected = result.rejected
+        .slice(0, 3)
+        .map((entry) => `${entry.email}: ${entry.reason}`)
+        .join(' · ')
+      const moreRejected = result.rejected.length > 3 ? ` (+${result.rejected.length - 3} more)` : ''
+      if (added === 0 && already === 0 && result.rejected.length > 0) {
+        toast.error('No students added', { description: `${rejected}${moreRejected}` })
+        return
+      }
       toast.success(added === 1 ? 'Student added' : `${added} students added`, {
         description:
-          already > 0
-            ? `${already} ${already === 1 ? 'was' : 'were'} already in this classroom.`
-            : 'They can see this classroom and its tests now.',
+          [
+            already > 0 ? `${already} ${already === 1 ? 'was' : 'were'} already in this classroom.` : '',
+            result.rejected.length > 0 ? `Not added: ${rejected}${moreRejected}` : '',
+          ]
+            .filter(Boolean)
+            .join(' ') || 'They can see this classroom and its tests now.',
       })
     },
     onError: (error: Error) => {
