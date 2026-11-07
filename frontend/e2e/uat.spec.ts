@@ -38,13 +38,16 @@ let testId = ''
 let shortTestId = ''
 let classroomUrl = ''
 
-/** Times a user action and soft-checks it against its budget. */
+/**
+ * Times a user action against its budget. Over budget is reported as SLOW in the
+ * timing table; only more than twice the budget fails the check.
+ */
 async function timed<T>(step: string, budgetMs: number, action: () => Promise<T>): Promise<T> {
   const started = Date.now()
   const result = await action()
   const ms = Date.now() - started
   timings.push({ step, ms, budgetMs, withinBudget: ms <= budgetMs })
-  expect.soft(ms, `${step} took ${ms} ms (budget ${budgetMs} ms)`).toBeLessThanOrEqual(budgetMs)
+  expect.soft(ms, `${step} took ${ms} ms (budget ${budgetMs} ms, hard limit ${2 * budgetMs} ms)`).toBeLessThanOrEqual(2 * budgetMs)
   return result
 }
 

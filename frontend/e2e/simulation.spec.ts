@@ -163,7 +163,7 @@ test('C3. every student sits all 10 experiments; each experiment is submitted by
   // Correct output: the teacher sees 50 submissions in every experiment.
   for (const testId of experimentIds) {
     const list = await call(api, 'get', `/api/submissions/test/${testId}`, teacherToken)
-    const rows: Array<{ state: string }> = list.body.data ?? []
+    const rows: Array<{ state: string }> = list.body.data?.submissions ?? []
     expect(rows.filter((row) => row.state === 'SUBMITTED' || row.state === 'LATE')).toHaveLength(50)
   }
 })
