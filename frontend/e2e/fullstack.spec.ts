@@ -87,6 +87,15 @@ async function submitExam(page: Page) {
   await expect(page.getByRole('button', { name: 'Submitted' })).toBeDisabled({ timeout: 60_000 })
 }
 
+/** After "Create test" the app returns to the classroom; the new test's id is in its Review link. */
+async function testIdFromClassroom(page: Page, title: string): Promise<string> {
+  await page.waitForURL(/\/app\/classrooms\/[^/]+$/, { timeout: 60_000 })
+  const link = page.getByRole('listitem').filter({ hasText: title }).getByRole('link', { name: 'Review' }).first()
+  await expect(link).toBeVisible({ timeout: 30_000 })
+  const href = (await link.getAttribute('href')) ?? ''
+  return decodeURIComponent(href.split('/tests/')[1]?.split(/[/?#]/)[0] ?? '')
+}
+
 /** Opens the classroom card by name on the teacher's classroom list. */
 async function openClassroom(page: Page) {
   await page.goto('/app/classrooms')
@@ -158,8 +167,7 @@ test('2. the teacher creates a classroom, adds students by email and sets a test
   await page.getByLabel('Time allowed (minutes)').fill('30')
   await page.getByLabel('Question 1 prompt').fill('Read two integers a and b on one line and print a + b.')
   await page.getByRole('button', { name: 'Create test' }).click()
-  await page.waitForURL(/\/tests\/(?!new$)[^/]+$/, { timeout: 60_000 })
-  testId = decodeURIComponent(page.url().split('/tests/')[1])
+  testId = await testIdFromClassroom(page, TEST_TITLE)
   expect(testId).not.toBe('')
 })
 

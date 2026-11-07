@@ -87,6 +87,15 @@ async function typeCode(page: Page, code: string) {
   }
 }
 
+/** After "Create test" the app returns to the classroom; the new test's id is in its Review link. */
+async function testIdFromClassroom(page: Page, title: string): Promise<string> {
+  await page.waitForURL(/\/app\/classrooms\/[^/]+$/, { timeout: 60_000 })
+  const link = page.getByRole('listitem').filter({ hasText: title }).getByRole('link', { name: 'Review' }).first()
+  await expect(link).toBeVisible({ timeout: 30_000 })
+  const href = (await link.getAttribute('href')) ?? ''
+  return decodeURIComponent(href.split('/tests/')[1]?.split(/[/?#]/)[0] ?? '')
+}
+
 async function createTest(page: Page, title: string, minutes: number) {
   await page.goto(`${classroomUrl}/tests/new`)
   await page.getByLabel('Title').fill(title)
@@ -98,9 +107,9 @@ async function createTest(page: Page, title: string, minutes: number) {
   await page.getByLabel('Question 1 prompt').fill('Read two integers on one line and print their sum.')
   await timed(`Teacher creates the test "${title}"`, BUDGET.action, async () => {
     await page.getByRole('button', { name: 'Create test' }).click()
-    await page.waitForURL(/\/tests\/(?!new$)[^/]+$/, { timeout: 60_000 })
+    await page.waitForURL(/\/app\/classrooms\/[^/]+$/, { timeout: 60_000 })
   })
-  return decodeURIComponent(page.url().split('/tests/')[1])
+  return testIdFromClassroom(page, title)
 }
 
 /* ======================================================================== */
